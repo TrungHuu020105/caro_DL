@@ -1,0 +1,92 @@
+{
+  "method": "Supervised distillation from open-segment tactical teacher",
+  "samples": 6000,
+  "validation_samples": 1200,
+  "epochs": 12,
+  "seed": 42,
+  "training_board_size": 9,
+  "training_win_lengths": [
+    3,
+    4,
+    5,
+    6
+  ],
+  "seconds": 13.0,
+  "trained_at": "2026-10-19T23:44:55.459026+00:00",
+  "best_val_loss": 2.67932,
+  "history": [
+    {
+      "epoch": 1,
+      "loss": 3.8898,
+      "val_loss": 3.77506,
+      "top1_accuracy": 0.1617
+    },
+    {
+      "epoch": 2,
+      "loss": 3.64976,
+      "val_loss": 3.53235,
+      "top1_accuracy": 0.2475
+    },
+    {
+      "epoch": 3,
+      "loss": 3.35606,
+      "val_loss": 3.25774,
+      "top1_accuracy": 0.35
+    },
+    {
+      "epoch": 4,
+      "loss": 3.1112,
+      "val_loss": 3.12173,
+      "top1_accuracy": 0.36
+    },
+    {
+      "epoch": 5,
+      "loss": 2.95777,
+      "val_loss": 2.96798,
+      "top1_accuracy": 0.4142
+    },
+    {
+      "epoch": 6,
+      "loss": 2.83544,
+      "val_loss": 2.87467,
+      "top1_accuracy": 0.45
+    },
+    {
+      "epoch": 7,
+      "loss": 2.74194,
+      "val_loss": 2.78426,
+      "top1_accuracy": 0.475
+    },
+    {
+      "epoch": 8,
+      "loss": 2.68847,
+      "val_loss": 2.76776,
+      "top1_accuracy": 0.4792
+    },
+    {
+      "epoch": 9,
+      "loss": 2.64571,
+      "val_loss": 2.72221,
+      "top1_accuracy": 0.48
+    },
+    {
+      "epoch": 10,
+      "loss": 2.61191,
+      "val_loss": 2.69941,
+      "top1_accuracy": 0.46
+    },
+    {
+      "epoch": 11,
+      "loss": 2.59089,
+      "val_loss": 2.69249,
+      "top1_accuracy": 0.5133
+    },
+    {
+      "epoch": 12,
+      "loss": 2.57109,
+      "val_loss": 2.67932,
+      "top1_accuracy": 0.51
+    }
+  ],
+  "limitations": "Synthetic training positions; value is a heuristic target, not a calibrated win probability. Larger boards rely on convolutional generalization and tactical search."
+}
