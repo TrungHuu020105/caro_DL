@@ -1,6 +1,11 @@
 import { useRef, type KeyboardEvent } from "react";
 import type { Analysis, Game, Player } from "./types";
 
+type BoardState = Pick<
+  Game,
+  "config" | "board" | "moves" | "analysis" | "current_player" | "winning_line"
+>;
+
 export function Mark({
   player,
   small = false,
@@ -25,7 +30,7 @@ export default function Board({
   heatmap = false,
   compact = false,
 }: {
-  game: Game;
+  game: BoardState;
   canPlay: boolean;
   hint: Analysis | null;
   onMove: (r: number, c: number) => void;
@@ -109,7 +114,7 @@ export default function Board({
                     style={
                       heatmap && !cell && candidates.has(key)
                         ? {
-                            backgroundColor: `rgba(70, 136, 96, ${0.1 + candidates.get(key)! * 0.5})`,
+                            backgroundColor: `rgba(var(--accent-rgb), ${0.1 + candidates.get(key)! * 0.5})`,
                           }
                         : undefined
                     }

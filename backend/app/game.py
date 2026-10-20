@@ -10,7 +10,7 @@ class GameConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     size: int = Field(default=15, ge=3, le=25)
     win_length: int | None = Field(default=None, ge=3, le=6)
-    mode: Literal["ai", "local", "online", "spectate"] = "ai"
+    mode: Literal["ai", "local", "spectate"] = "ai"
     difficulty: Literal["easy", "medium", "hard"] = "medium"
     rule: Literal["freestyle", "exact", "blocked"] = "freestyle"
     human_player: Literal[1, -1] = 1
@@ -32,9 +32,6 @@ class Game:
     config: GameConfig
     id: str = field(default_factory=lambda: secrets.token_urlsafe(16))
     host_token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
-    guest_token: str | None = None
-    guest_name: str = "Người chơi 2"
-    room_code: str | None = None
     board: list[list[int]] = field(init=False)
     moves: list[dict] = field(default_factory=list)
     current_player: int = 1
@@ -51,14 +48,10 @@ class Game:
 
     def __post_init__(self):
         self.board = [[0] * self.config.size for _ in range(self.config.size)]
-        if self.config.mode == "online":
-            self.status = "waiting"
 
     def player_for(self, token):
         if token == self.host_token:
             return self.config.human_player if self.config.mode == "ai" else 1
-        if self.guest_token and token == self.guest_token:
-            return -1
         raise ValueError("Bạn không có quyền truy cập ván cờ này.")
 
     def timeout(self):
@@ -94,7 +87,7 @@ class Game:
         self.revision += 1
 
     def undo(self):
-        if self.config.mode in ("online", "spectate"):
+        if self.config.mode == "spectate":
             raise ValueError("Chế độ này không hỗ trợ đi lại.")
         if not self.moves or self.status != "playing":
             raise ValueError("Không thể đi lại lúc này.")
@@ -114,7 +107,6 @@ class Game:
         return {"id": self.id, "config": self.config.model_dump(), "board": self.board,
                 "moves": self.moves, "current_player": self.current_player, "status": self.status,
                 "winner": self.winner, "winning_line": self.win_line, "revision": self.revision,
-                "analysis": self.analysis, "room_code": self.room_code, "your_player": player,
-                "guest_joined": self.guest_token is not None, "guest_name": self.guest_name,
+                "analysis": self.analysis, "your_player": player,
                 "created_at": self.created_at, "turn_started_at": self.turn_started_at,
                 "ended_reason": self.ended_reason, "ended_at": self.ended_at}

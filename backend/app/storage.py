@@ -1,4 +1,4 @@
-"""Finished games survive API restarts; live rooms intentionally stay in memory."""
+"""Finished games survive API restarts; active games stay in memory."""
 import json
 from contextlib import contextmanager
 from pathlib import Path

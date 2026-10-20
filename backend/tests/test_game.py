@@ -150,21 +150,21 @@ class APITests(unittest.TestCase):
         self.assertEqual(stored[0]["id"],game["id"])
         self.assertNotIn("token",str(stored))
 
-    def test_online_websocket_and_turn_ownership(self):
-        host,headers=self.create(mode="online")
-        url=f'/api/games/{host["id"]}'
-        with self.client.websocket_connect(f'/ws/games/{host["id"]}') as ws:
-            ws.send_json({"token":headers["X-Player-Token"]})
-            self.assertEqual(ws.receive_json()["game"]["status"],"waiting")
-            joined=self.client.post("/api/rooms/join",json={"code":host["room_code"],"name":"Khách"}).json()
-            self.assertEqual(ws.receive_json()["game"]["status"],"playing")
-            guest_headers={"X-Player-Token":joined["token"]}
-            self.assertEqual(self.client.post(url+"/move",headers=guest_headers,json={"row":1,"col":1,"revision":1}).status_code,403)
-            self.assertEqual(self.client.post(url+"/move",headers=headers,json={"row":0,"col":0,"revision":1}).status_code,200)
-            self.assertEqual(ws.receive_json()["game"]["board"][0][0],1)
-            self.assertEqual(self.client.post(url+"/undo",headers=headers).status_code,400)
-            self.assertEqual(self.client.post(url+"/hint",headers=guest_headers).status_code,400)
-            self.assertEqual(self.client.post("/api/rooms/join",json={"code":host["room_code"]}).status_code,409)
+    def test_removed_mode_and_room_endpoints(self):
+        self.assertEqual(self.client.post("/api/games",json={"mode":"online"}).status_code,422)
+        self.assertEqual(self.client.post("/api/rooms/join",json={"code":"ABC123"}).status_code,404)
+        self.assertFalse(any(route.path.startswith("/ws/") for route in app.routes))
+
+    def test_custom_winning_length_on_larger_board(self):
+        game,headers=self.create(size=6,win_length=4,mode="local")
+        url=f'/api/games/{game["id"]}'
+        for revision,(r,c) in enumerate([(0,0),(1,0),(0,1),(1,1),(0,2),(1,2),(0,3)]):
+            response=self.client.post(url+"/move",headers=headers,json={"row":r,"col":c,"revision":revision})
+            self.assertEqual(response.status_code,200,response.text)
+            if revision < 6:
+                self.assertEqual(response.json()["status"],"playing")
+        self.assertEqual(response.json()["winner"],1)
+        self.assertEqual(len(response.json()["winning_line"]),4)
 
     def test_hint_spectate_and_resignation(self):
         game,headers=self.create(mode="local")

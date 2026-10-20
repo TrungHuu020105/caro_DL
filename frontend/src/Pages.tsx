@@ -38,12 +38,12 @@ export function Guide() {
           {
             icon: Grid3X3,
             title: "Chọn bàn cờ của bạn",
-            text: "Từ 3×3 gọn nhẹ đến 25×25 đầy thử thách. Bàn 3×3 mặc định cần 3 quân; 4×4 cần 4 quân; từ 5×5 cần 5 quân. Bạn có thể đổi mục tiêu trong phần nâng cao.",
+            text: "Chọn bàn từ 3×3 đến 25×25 và chọn nhanh Số quân để thắng ngay bên dưới kích thước bàn. Nhấn Bắt đầu để mở bàn cờ; AI và đồng hồ chỉ chạy từ lúc đó.",
           },
           {
             icon: Users,
             title: "X trước, O sau",
-            text: "Hai bên lần lượt đặt một quân vào ô trống. Bạn có thể chơi cùng một người tại máy, tạo mã phòng online, đấu AI hoặc xem hai AI tự chơi.",
+            text: "Hai bên lần lượt đặt một quân vào ô trống. Bạn có thể chơi cùng một người tại máy, đấu AI hoặc xem hai AI tự chơi. X luôn đi trước, O đi sau.",
           },
           {
             icon: Trophy,
@@ -58,7 +58,7 @@ export function Guide() {
           {
             icon: Lightbulb,
             title: "Một chút trợ giúp",
-            text: "Gợi ý đánh dấu nước đi AI đề xuất. Đi lại hoàn tác một lượt ở chế độ hai người hoặc lượt của bạn cùng phản hồi của AI. Hai tính năng này tắt khi chơi online.",
+            text: "Gợi ý đánh dấu nước đi AI đề xuất. Đi lại hoàn tác một lượt ở chế độ hai người hoặc lượt của bạn cùng phản hồi của AI. Khi xem AI đấu AI, bạn có thể tạm dừng và tiếp tục.",
           },
           {
             icon: BrainCircuit,
@@ -168,8 +168,8 @@ export function AILab({ model }: { model: ModelInfo | null }) {
               >
                 <defs>
                   <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3c8462" stopOpacity=".18" />
-                    <stop offset="100%" stopColor="#3c8462" stopOpacity="0" />
+                    <stop offset="0%" stopColor="#8b5cf6" stopOpacity=".18" />
+                    <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0" />
                   </linearGradient>
                 </defs>
                 {[0, 1, 2, 3, 4].map((i) => (
@@ -200,7 +200,7 @@ export function AILab({ model }: { model: ModelInfo | null }) {
                 <polyline
                   points={points("loss")}
                   fill="none"
-                  stroke="#3c8462"
+                  stroke="#8b5cf6"
                   strokeWidth="3"
                   strokeLinejoin="round"
                 />
@@ -421,7 +421,7 @@ export function Statistics({
                         minute: "2-digit",
                       })}
                     </td>
-                    <td>{MODE_NAMES[g.config.mode]}</td>
+                    <td>{MODE_NAMES[g.config.mode] || "Ván cũ"}</td>
                     <td>
                       {g.config.size}×{g.config.size}
                     </td>
@@ -473,7 +473,8 @@ export function Replay({ game, onClose }: { game: Game; onClose: () => void }) {
     <>
       <div className="replay-summary">
         <span>
-          {MODE_NAMES[game.config.mode]} · {game.config.size}×{game.config.size}
+          {MODE_NAMES[game.config.mode] || "Ván cũ"} · {game.config.size}×
+          {game.config.size}
         </span>
         <span>
           {game.winner ? (

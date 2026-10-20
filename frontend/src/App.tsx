@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -10,10 +10,8 @@ import {
   ChevronRight,
   CircleHelp,
   Clock3,
-  Copy,
   Flag,
   Gamepad2,
-  Globe2,
   Hash,
   History,
   Lightbulb,
@@ -29,13 +27,12 @@ import {
   Undo2,
   Volume2,
   VolumeX,
-  Wifi,
   X,
 } from "lucide-react";
 import Board, { Mark } from "./Board";
 import Settings, { AdvancedSettings, Dialog, MODE_NAMES } from "./Settings";
 import { AILab, Guide, Replay, Statistics } from "./Pages";
-import { gameRequest, readSaved, request, save, socketUrl } from "./api";
+import { gameRequest, readSaved, request, save } from "./api";
 import type {
   Analysis,
   Game,
@@ -56,7 +53,7 @@ const DEFAULT_CONFIG: GameConfig = {
   player_name: "Bạn",
 };
 type Tab = "play" | "guide" | "stats" | "lab";
-type Modal = "settings" | "join" | "resign" | null;
+type Modal = "settings" | "resign" | null;
 const TABS = [
   { id: "play", label: "Chơi cờ", icon: Gamepad2 },
   { id: "guide", label: "Hướng dẫn", icon: BookOpen },
@@ -66,13 +63,26 @@ const TABS = [
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("play");
-  const [config, setConfig] = useState<GameConfig>(() =>
-    readSaved("caro.config", DEFAULT_CONFIG),
-  );
+  const [config, setConfig] = useState<GameConfig>(() => {
+    const saved = readSaved<GameConfig>("caro.config", DEFAULT_CONFIG);
+    const size =
+      Number.isInteger(saved.size) && saved.size >= 3 && saved.size <= 25
+        ? saved.size
+        : 15;
+    return {
+      ...DEFAULT_CONFIG,
+      ...saved,
+      size,
+      mode: ["ai", "local", "spectate"].includes(saved.mode)
+        ? saved.mode
+        : "ai",
+      win_length: Math.max(3, Math.min(saved.win_length || 5, size, 6)),
+    };
+  });
   const [game, setGame] = useState<Game | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [model, setModel] = useState<ModelInfo | null>(null);
-  const [online, setOnline] = useState(false);
+  const [serverReady, setServerReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [error, setError] = useState("");
@@ -86,9 +96,6 @@ export default function App() {
   const [sound, setSound] = useState(() => readSaved("caro.sound", true));
   const [dark, setDark] = useState(() => readSaved("caro.dark", false));
   const [now, setNow] = useState(Date.now());
-  const [copied, setCopied] = useState(false);
-  const [socketState, setSocketState] = useState("");
-  const [joinCode, setJoinCode] = useState("");
   const [history, setHistory] = useState<Game[]>(() =>
     readSaved("caro.history", []),
   );
@@ -136,7 +143,6 @@ export default function App() {
     setAiFailed(false);
     setError("");
     setTab("play");
-    save("caro.session", next);
     const ids = readSaved<string[]>("caro.ids", []);
     save(
       "caro.ids",
@@ -163,6 +169,11 @@ export default function App() {
           body: JSON.stringify(settings),
         });
         acceptSession(data);
+        setServerReady(true);
+        // Refresh model details when the backend has just become available.
+        void request<ModelInfo>("/model")
+          .then(setModel)
+          .catch(() => {});
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -173,42 +184,34 @@ export default function App() {
     [acceptSession],
   );
 
+  const checkServer = useCallback(async () => {
+    try {
+      const info = await request<ModelInfo>("/model");
+      setModel(info);
+      setServerReady(true);
+      setError("");
+    } catch (e) {
+      setServerReady(false);
+      setError((e as Error).message);
+    } finally {
+      setInitializing(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (mounted.current) return;
     mounted.current = true;
-    async function init() {
-      try {
-        const info = await request<ModelInfo>("/model");
-        setModel(info);
-        setOnline(true);
-        const savedSession = readSaved<Session | null>("caro.session", null);
-        if (savedSession) {
-          try {
-            const state = await gameRequest<Game>(savedSession);
-            acceptSession({ game: state, token: savedSession.token });
-            return;
-          } catch {
-            /* Session expired: begin a fresh game. */
-          }
-        }
-        await startGame(readSaved("caro.config", DEFAULT_CONFIG));
-      } catch (e) {
-        setError((e as Error).message);
-      } finally {
-        setInitializing(false);
-      }
-    }
-    void init();
-  }, [acceptSession, startGame]);
+    void checkServer();
+  }, [checkServer]);
 
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
         await request("/health");
-        setOnline(true);
+        setServerReady(true);
         if (!model) setModel(await request<ModelInfo>("/model"));
       } catch {
-        setOnline(false);
+        setServerReady(false);
       }
     }, 15000);
     return () => clearInterval(timer);
@@ -260,53 +263,6 @@ export default function App() {
     );
     return () => clearTimeout(timer);
   }, [game?.id, game?.revision, aiTurn, paused, aiFailed, initializing, act]);
-
-  useEffect(() => {
-    if (!game || !session || game.config.mode !== "online") return;
-    let disposed = false,
-      socket: WebSocket | null = null,
-      retry: ReturnType<typeof setTimeout>;
-    const connect = () => {
-      if (disposed) return;
-      setSocketState("Đang kết nối…");
-      socket = new WebSocket(socketUrl(session.id));
-      socket.onopen = () => {
-        socket?.send(JSON.stringify({ token: session.token }));
-        setSocketState("Đã kết nối");
-      };
-      socket.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (
-            data.type === "state" &&
-            activeSession.current?.id === data.game.id
-          )
-            setGame((old) =>
-              !old || data.game.revision >= old.revision ? data.game : old,
-            );
-        } catch {
-          /* Ignore malformed transport messages. */
-        }
-      };
-      socket.onclose = () => {
-        if (!disposed) {
-          setSocketState("Đang kết nối lại…");
-          retry = setTimeout(connect, 2000);
-        }
-      };
-      socket.onerror = () => socket?.close();
-    };
-    connect();
-    const poll = setInterval(() => {
-      if (!disposed) void refresh(session).catch(() => {});
-    }, 5000);
-    return () => {
-      disposed = true;
-      clearTimeout(retry);
-      clearInterval(poll);
-      socket?.close();
-    };
-  }, [game?.id, game?.config.mode, session, refresh]);
 
   useEffect(() => {
     if (
@@ -397,7 +353,19 @@ export default function App() {
     (game.config.mode === "local" || game.your_player === game.current_player);
   const finished = game?.status === "won" || game?.status === "draw";
   const actual = game?.config || config;
-  const isOnline = actual.mode === "online";
+  const preview = useMemo(
+    () => ({
+      config,
+      board: Array.from({ length: config.size }, () =>
+        Array<number>(config.size).fill(0),
+      ),
+      moves: [],
+      analysis: null,
+      current_player: 1 as Player,
+      winning_line: [],
+    }),
+    [config],
+  );
   const moveCount = game?.moves.length || 0;
   const elapsed = game
     ? Math.max(0, Math.floor((game.ended_at || now / 1000) - game.created_at))
@@ -416,13 +384,10 @@ export default function App() {
         : "Không chặn 2 đầu";
 
   function playerName(player: Player) {
-    if (!game) return player === 1 ? "Bạn" : "Caro AI";
     if (actual.mode === "ai")
       return player === actual.human_player ? actual.player_name : "Caro AI";
     if (actual.mode === "spectate")
       return player === 1 ? "Caro AI · X" : "Caro AI · O";
-    if (actual.mode === "online")
-      return player === 1 ? actual.player_name : game.guest_name;
     return player === 1 ? actual.player_name : "Người chơi 2";
   }
 
@@ -446,39 +411,16 @@ export default function App() {
     }
   }
 
-  async function joinRoom() {
-    if (busy) return;
-    setBusy(true);
-    actionLock.current = true;
+  function prepareGame(settings: GameConfig) {
+    if (actionLock.current) return;
+    activeSession.current = null;
+    setSession(null);
+    setGame(null);
+    setConfig(settings);
+    setHint(null);
+    setPaused(false);
+    setAiFailed(false);
     setError("");
-    try {
-      const data = await request<{ game: Game; token: string }>("/rooms/join", {
-        method: "POST",
-        body: JSON.stringify({
-          code: joinCode.trim().toUpperCase(),
-          name: config.player_name || "Người chơi 2",
-        }),
-      });
-      acceptSession(data);
-      setModal(null);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-      actionLock.current = false;
-    }
-  }
-
-  async function copyCode() {
-    if (!game?.room_code) return;
-    try {
-      await navigator.clipboard.writeText(game.room_code);
-      setCopied(true);
-      setToast("Đã sao chép mã phòng");
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setToast(`Mã phòng của bạn: ${game.room_code}`);
-    }
   }
 
   async function fullscreen() {
@@ -491,20 +433,18 @@ export default function App() {
   }
 
   const statusText = !game
-    ? "Sẵn sàng cho một ván mới"
-    : game.status === "waiting"
-      ? "Đang chờ người chơi thứ hai"
-      : finished
-        ? game.status === "draw"
-          ? "Một ván cờ cân tài cân sức!"
-          : `${playerName(game.winner!)} ${game.winner === actual.human_player && actual.mode === "ai" ? "thắng rồi!" : "chiến thắng!"}`
-        : aiTurn
-          ? paused
-            ? "AI đang tạm dừng"
-            : aiFailed
-              ? "AI cần kết nối lại"
-              : "AI đang suy nghĩ…"
-          : `Đến lượt ${playerName(game.current_player)}`;
+    ? "Chưa bắt đầu · Chọn thiết lập để chơi"
+    : finished
+      ? game.status === "draw"
+        ? "Một ván cờ cân tài cân sức!"
+        : `${playerName(game.winner!)} ${game.winner === actual.human_player && actual.mode === "ai" ? "thắng rồi!" : "chiến thắng!"}`
+      : aiTurn
+        ? paused
+          ? "AI đang tạm dừng"
+          : aiFailed
+            ? "AI cần kết nối lại"
+            : "AI đang suy nghĩ…"
+        : `Đến lượt ${playerName(game.current_player)}`;
 
   return (
     <div className="app-shell">
@@ -537,9 +477,9 @@ export default function App() {
           ))}
         </nav>
         <div className="topbar-right">
-          <span className={`server-status ${online ? "connected" : ""}`}>
+          <span className={`server-status ${serverReady ? "connected" : ""}`}>
             <i />
-            {online ? "Máy chủ sẵn sàng" : "Chưa kết nối"}
+            {serverReady ? "Máy chủ sẵn sàng" : "Chưa kết nối"}
           </span>
           <span className="topbar-divider" />
           <button
@@ -582,7 +522,7 @@ export default function App() {
                   </span>
                   <i />
                   <span>
-                    <Globe2 size={14} /> Chơi cùng bạn bè
+                    <Gamepad2 size={14} /> Hai người cùng máy
                   </span>
                   <i />
                   <span>3×3 → 25×25</span>
@@ -610,7 +550,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setError("");
-                    if (!game) void startGame(config);
+                    if (!game) void checkServer();
                     if (aiFailed) setAiFailed(false);
                   }}
                 >
@@ -635,11 +575,7 @@ export default function App() {
                   void startGame(config);
                 }}
                 onAdvanced={() => setModal("settings")}
-                onJoin={() => {
-                  setJoinCode("");
-                  setError("");
-                  setModal("join");
-                }}
+                started={!!game}
               />
               <section className="arena panel" ref={arenaRef}>
                 <div className="arena-heading">
@@ -648,9 +584,9 @@ export default function App() {
                       <i />
                       {finished
                         ? "ĐÃ KẾT THÚC"
-                        : game?.status === "waiting"
-                          ? "PHÒNG CHỜ"
-                          : "ĐANG CHƠI"}
+                        : game
+                          ? "ĐANG CHƠI"
+                          : "SẴN SÀNG"}
                     </span>
                     <h2>
                       {actual.size} × {actual.size}
@@ -685,25 +621,6 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-                {isOnline && game?.room_code && (
-                  <div className="room-banner">
-                    <Globe2 size={16} />
-                    <span>
-                      Mã phòng <strong>{game.room_code}</strong>
-                    </span>
-                    <button
-                      className="icon-button"
-                      onClick={() => void copyCode()}
-                      aria-label="Sao chép mã phòng"
-                    >
-                      {copied ? <Check size={15} /> : <Copy size={15} />}
-                    </button>
-                    <small>
-                      <Wifi size={12} />
-                      {socketState}
-                    </small>
-                  </div>
-                )}
                 <div className="players-strip">
                   {([1, -1] as Player[]).map((p) => (
                     <div
@@ -746,15 +663,11 @@ export default function App() {
                       className={aiFailed ? "" : "spin"}
                       size={15}
                     />
-                  ) : game?.status === "waiting" ? (
-                    <Globe2 size={15} />
                   ) : (
                     <span className="turn-indicator" />
                   )}
                   <strong>{statusText}</strong>
-                  {remaining !== null &&
-                  !finished &&
-                  game?.status !== "waiting" ? (
+                  {remaining !== null && !finished ? (
                     <span className={remaining <= 5 ? "timer urgent" : "timer"}>
                       <Clock3 size={13} />
                       {remaining}s
@@ -770,15 +683,15 @@ export default function App() {
                     <button
                       className="text-button"
                       disabled={busy}
-                      onClick={() => void startGame(actual)}
+                      onClick={() => prepareGame(actual)}
                     >
                       Chơi tiếp <ArrowRight size={14} />
                     </button>
                   )}
                 </div>
-                {game ? (
+                <div className={`board-stage ${game ? "" : "board-ready"}`}>
                   <Board
-                    game={game}
+                    game={game || preview}
                     canPlay={canPlay}
                     hint={hint}
                     onMove={(r, c) => {
@@ -786,40 +699,52 @@ export default function App() {
                       void act("move", {
                         row: r,
                         col: c,
-                        revision: game.revision,
+                        revision: game!.revision,
                       });
                     }}
                     showNumbers={showNumbers}
                     heatmap={heatmap}
                   />
-                ) : (
-                  <div className="board-placeholder">
-                    {initializing ? (
-                      <>
-                        <LoaderCircle className="spin" size={30} />
-                        <p>Đang chuẩn bị bàn cờ…</p>
-                      </>
-                    ) : (
-                      <>
-                        <Gamepad2 size={42} strokeWidth={1.2} />
-                        <h3>Bàn cờ đang chờ bạn</h3>
-                        <p>Khởi động backend và bắt đầu một ván mới.</p>
-                        <button
-                          className="button primary"
-                          onClick={() => void startGame(config)}
-                        >
-                          Kết nối & chơi <ArrowRight size={16} />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
+                  {!game && (
+                    <div className="ready-overlay">
+                      <span className="ready-icon">
+                        <Gamepad2 size={27} strokeWidth={1.5} />
+                      </span>
+                      <span className="eyebrow">BÀN CỜ CỦA BẠN</span>
+                      <h3>Sẵn sàng cho nước đầu tiên?</h3>
+                      <p>
+                        {config.size}×{config.size} · Nối {config.win_length}{" "}
+                        quân · {MODE_NAMES[config.mode]}
+                      </p>
+                      <button
+                        className="button primary"
+                        disabled={busy || initializing}
+                        onClick={() => {
+                          unlockAudio();
+                          void startGame(config);
+                        }}
+                      >
+                        {busy ? (
+                          <LoaderCircle className="spin" size={16} />
+                        ) : (
+                          <Play size={16} />
+                        )}{" "}
+                        Bắt đầu
+                      </button>
+                      <small>
+                        Bạn chọn luật chơi. Nước đầu tiên luôn chờ bạn.
+                      </small>
+                    </div>
+                  )}
+                </div>
                 <div className="board-caption">
                   <span>
                     <span className="caption-dot" />
                     {game?.moves.length
                       ? `Nước vừa đi: ${String.fromCharCode(65 + game.moves.at(-1)!.col)}${game.moves.at(-1)!.row + 1}`
-                      : "Nhấp vào một ô trống để đặt quân"}
+                      : game
+                        ? "Nhấp vào một ô trống để đặt quân"
+                        : "Nhấn Bắt đầu để mở bàn cờ"}
                   </span>
                   <span>
                     {ruleText} <span className="caption-divider">·</span>{" "}
@@ -832,7 +757,6 @@ export default function App() {
                       !game?.moves.length ||
                       busy ||
                       finished ||
-                      isOnline ||
                       actual.mode === "spectate"
                     }
                     onClick={() => void act("undo")}
@@ -842,9 +766,7 @@ export default function App() {
                     <span>Đi lại</span>
                   </button>
                   <button
-                    disabled={
-                      !canPlay || isOnline || actual.mode === "spectate"
-                    }
+                    disabled={!canPlay || actual.mode === "spectate"}
                     onClick={() => void getHint()}
                     className={hint ? "tool-active" : ""}
                   >
@@ -863,7 +785,7 @@ export default function App() {
                   {actual.mode === "spectate" ? (
                     <button
                       onClick={() => setPaused(!paused)}
-                      disabled={finished}
+                      disabled={!game || finished}
                       aria-label={paused ? "Tiếp tục AI" : "Tạm dừng AI"}
                     >
                       {paused ? <Play size={17} /> : <Pause size={17} />}
@@ -880,10 +802,10 @@ export default function App() {
                   )}
                   <button
                     className="restart-tool"
-                    disabled={busy}
-                    onClick={() => void startGame(actual)}
-                    aria-label="Chơi ván mới cùng thiết lập"
-                    title="Chơi ván mới"
+                    disabled={!game || busy}
+                    onClick={() => prepareGame(actual)}
+                    aria-label="Thiết lập lại ván cờ"
+                    title="Thiết lập lại ván cờ"
                   >
                     <RotateCcw size={17} />
                   </button>
@@ -1105,76 +1027,11 @@ export default function App() {
           </button>
         </Dialog>
       )}
-      {modal === "join" && (
-        <Dialog
-          title="Gặp nhau trên bàn cờ"
-          onClose={() => {
-            setModal(null);
-            setError("");
-          }}
-        >
-          <p className="dialog-description">
-            Nhập mã 6 ký tự từ người tạo phòng. Bạn sẽ chơi quân O.
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void joinRoom();
-            }}
-          >
-            <label className="field-label">
-              Tên người chơi
-              <input
-                maxLength={24}
-                value={config.player_name}
-                onChange={(e) =>
-                  setConfig({ ...config, player_name: e.target.value })
-                }
-              />
-            </label>
-            <label className="field-label">
-              Mã phòng
-              <input
-                autoFocus
-                className="room-code-input"
-                value={joinCode}
-                onChange={(e) =>
-                  setJoinCode(
-                    e.target.value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase(),
-                  )
-                }
-                maxLength={6}
-                placeholder="ABC123"
-                required
-                minLength={6}
-              />
-            </label>
-            {error && (
-              <p role="alert" className="form-error">
-                {error}
-              </p>
-            )}
-            <button
-              type="submit"
-              className="button primary dialog-primary"
-              disabled={busy || joinCode.length !== 6}
-            >
-              {busy ? (
-                <LoaderCircle className="spin" size={17} />
-              ) : (
-                <Globe2 size={17} />
-              )}
-              Tham gia phòng
-            </button>
-          </form>
-        </Dialog>
-      )}
       {modal === "resign" && (
         <Dialog title="Dừng ván cờ tại đây?" onClose={() => setModal(null)}>
           <p className="dialog-description">
-            {game?.status === "waiting"
-              ? "Phòng chờ sẽ đóng. Bạn có thể tạo một phòng mới bất cứ lúc nào."
-              : "Đối thủ sẽ được tính là người thắng. Ván cờ này vẫn được lưu để bạn xem lại."}
+            Đối thủ sẽ được tính là người thắng. Ván cờ này vẫn được lưu để bạn
+            xem lại.
           </p>
           <div className="dialog-buttons">
             <button className="button secondary" onClick={() => setModal(null)}>

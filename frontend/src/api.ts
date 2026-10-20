@@ -58,13 +58,6 @@ export function gameRequest<T>(
   );
 }
 
-export function socketUrl(id: string) {
-  const base = API_BASE ? new URL(API_BASE) : new URL(window.location.origin);
-  base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
-  base.pathname += `/ws/games/${id}`;
-  return base.toString();
-}
-
 export function readSaved<T>(key: string, fallback: T): T {
   try {
     return JSON.parse(localStorage.getItem(key) || "null") ?? fallback;

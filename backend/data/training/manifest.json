@@ -1,0 +1,132 @@
+{
+  "format_version": 1,
+  "generator": "synthetic-tactical-v1",
+  "generated_at": "2026-10-20T00:07:08.254866+00:00",
+  "seed": 42,
+  "validation_seed": 43,
+  "samples": 6000,
+  "validation_samples": 1200,
+  "board_size": 9,
+  "win_lengths": [
+    3,
+    4,
+    5,
+    6
+  ],
+  "board_encoding": {
+    "X": 1,
+    "O": -1,
+    "empty": 0
+  },
+  "input_channels": [
+    "own_stones",
+    "opponent_stones",
+    "empty_cells",
+    "win_length/6",
+    "board_mask"
+  ],
+  "policy_index": "row * board_size + col (zero-based)",
+  "value_target": "tanh((log1p(own_teacher_max)-log1p(opponent_teacher_max))/4)",
+  "limitations": "Synthetic tactical positions, not legal self-play records. Value targets are heuristic scores, not calibrated win probabilities.",
+  "fingerprint_sha256": "8492dd7fe9f078827a042fd2d20920460bc919763b50d80b2f6090e5e72e9f8e",
+  "arrays": {
+    "train_boards": {
+      "shape": [
+        6000,
+        9,
+        9
+      ],
+      "dtype": "int8"
+    },
+    "train_players": {
+      "shape": [
+        6000
+      ],
+      "dtype": "int8"
+    },
+    "train_win_lengths": {
+      "shape": [
+        6000
+      ],
+      "dtype": "int8"
+    },
+    "train_inputs": {
+      "shape": [
+        6000,
+        5,
+        9,
+        9
+      ],
+      "dtype": "float32"
+    },
+    "train_policy": {
+      "shape": [
+        6000,
+        81
+      ],
+      "dtype": "float32"
+    },
+    "train_value": {
+      "shape": [
+        6000
+      ],
+      "dtype": "float32"
+    },
+    "val_boards": {
+      "shape": [
+        1200,
+        9,
+        9
+      ],
+      "dtype": "int8"
+    },
+    "val_players": {
+      "shape": [
+        1200
+      ],
+      "dtype": "int8"
+    },
+    "val_win_lengths": {
+      "shape": [
+        1200
+      ],
+      "dtype": "int8"
+    },
+    "val_inputs": {
+      "shape": [
+        1200,
+        5,
+        9,
+        9
+      ],
+      "dtype": "float32"
+    },
+    "val_policy": {
+      "shape": [
+        1200,
+        81
+      ],
+      "dtype": "float32"
+    },
+    "val_value": {
+      "shape": [
+        1200
+      ],
+      "dtype": "float32"
+    }
+  },
+  "files": {
+    "caro_dataset.npz": {
+      "bytes": 2088613,
+      "sha256": "fa33ef0b60b0f59a9013a653d0fae36b0632a99f4799e96d9353ba06443ef5b3"
+    },
+    "train.csv": {
+      "bytes": 10117840,
+      "sha256": "5f094a8e90a59f0e91049f1d496e89786075b66e0aded5b2e80a3ef07428e633"
+    },
+    "validation.csv": {
+      "bytes": 2016103,
+      "sha256": "71f37d71e37e7a7665f7b73cc35e4c8880e2f43885e749943f9ffed5c1585556"
+    }
+  }
+}

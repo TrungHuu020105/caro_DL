@@ -11,9 +11,18 @@
     5,
     6
   ],
-  "seconds": 13.0,
-  "trained_at": "2026-10-19T23:44:55.459026+00:00",
+  "seconds": 24.9,
+  "trained_at": "2026-10-20T00:07:57.520298+00:00",
   "best_val_loss": 2.67932,
+  "best_epoch": 12,
+  "checkpoint_selection": "Lowest validation policy loss within this training run",
+  "checkpoint_sha256": "c877181457662a58da35f7531a6fee05d74dbe6bb9c323807bbaab2516cffe66",
+  "dataset": {
+    "path": "D:/DuLieuCuaHuu/HK1_20262027/DeepLearning/LabCaro/backend/data/training/caro_dataset.npz",
+    "file_sha256": "fa33ef0b60b0f59a9013a653d0fae36b0632a99f4799e96d9353ba06443ef5b3",
+    "fingerprint_sha256": "8492dd7fe9f078827a042fd2d20920460bc919763b50d80b2f6090e5e72e9f8e",
+    "generator_seed": 42
+  },
   "history": [
     {
       "epoch": 1,

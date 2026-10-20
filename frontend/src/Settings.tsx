@@ -2,7 +2,6 @@ import { useEffect, useRef, type ReactNode } from "react";
 import {
   Bot,
   Users,
-  Globe2,
   Play,
   ArrowUpRight,
   SlidersHorizontal,
@@ -29,12 +28,6 @@ export const MODES: {
     title: "Hai người",
     subtitle: "Chung máy, chung niềm vui",
     icon: Users,
-  },
-  {
-    id: "online",
-    title: "Chơi online",
-    subtitle: "Mời bạn bằng mã phòng",
-    icon: Globe2,
   },
   {
     id: "spectate",
@@ -191,8 +184,8 @@ export function AdvancedSettings({
       <div className="soft-note">
         <Sparkles size={18} />
         <span>
-          X luôn đi trước. Với bàn 3×3, 4×4, luật mặc định cần lần lượt 3 và 4
-          quân; từ 5×5 cần 5 quân.
+          X luôn đi trước. Bạn cũng có thể chọn nhanh số quân để thắng ngay tại
+          bảng thiết lập bên cạnh bàn cờ.
         </span>
       </div>
     </div>
@@ -205,14 +198,14 @@ export default function Settings({
   busy,
   onStart,
   onAdvanced,
-  onJoin,
+  started,
 }: {
   config: GameConfig;
   setConfig: (c: GameConfig) => void;
   busy: boolean;
   onStart: () => void;
   onAdvanced: () => void;
-  onJoin: () => void;
+  started: boolean;
 }) {
   return (
     <aside className="settings-column">
@@ -221,54 +214,83 @@ export default function Settings({
           <h2>Thiết lập ván cờ</h2>
           <SlidersHorizontal size={16} />
         </div>
-        <span className="eyebrow section-label">01 / CHẾ ĐỘ CHƠI</span>
-        <div className="mode-options">
-          {MODES.map(({ id, title, subtitle, icon: Icon }) => (
-            <button
-              key={id}
-              className={`mode-option ${config.mode === id ? "selected" : ""}`}
-              onClick={() => setConfig({ ...config, mode: id })}
-              aria-pressed={config.mode === id}
-            >
-              <span className="mode-icon">
-                <Icon size={19} strokeWidth={1.8} />
-              </span>
-              <span>
-                <strong>{title}</strong>
-                <small>{subtitle}</small>
-              </span>
-              {config.mode === id && (
-                <span className="selection-check">
-                  <Check size={11} strokeWidth={3} />
+        <div className="settings-section settings-modes">
+          <span className="eyebrow section-label">01 / CHẾ ĐỘ CHƠI</span>
+          <div className="mode-options">
+            {MODES.map(({ id, title, subtitle, icon: Icon }) => (
+              <button
+                key={id}
+                className={`mode-option ${config.mode === id ? "selected" : ""}`}
+                onClick={() => setConfig({ ...config, mode: id })}
+                aria-pressed={config.mode === id}
+              >
+                <span className="mode-icon">
+                  <Icon size={19} strokeWidth={1.8} />
                 </span>
-              )}
-            </button>
-          ))}
+                <span>
+                  <strong>{title}</strong>
+                  <small>{subtitle}</small>
+                </span>
+                {config.mode === id && (
+                  <span className="selection-check">
+                    <Check size={11} strokeWidth={3} />
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
-        <span className="eyebrow section-label">02 / KÍCH THƯỚC BÀN CỜ</span>
-        <div className="size-options">
-          {[3, 4, 5, 6, 8, 10, 12, 15, 19].map((size) => (
-            <button
-              key={size}
-              className={config.size === size ? "selected" : ""}
-              aria-pressed={config.size === size}
-              onClick={() =>
-                setConfig({ ...config, size, win_length: Math.min(size, 5) })
-              }
-            >
-              {size}×{size}
-              {size === 15 && <span className="size-dot" />}
-            </button>
-          ))}
+        <div className="settings-section settings-sizes">
+          <span className="eyebrow section-label">02 / KÍCH THƯỚC BÀN CỜ</span>
+          <div className="size-options">
+            {[3, 4, 5, 6, 8, 10, 12, 15, 19].map((size) => (
+              <button
+                key={size}
+                className={config.size === size ? "selected" : ""}
+                aria-pressed={config.size === size}
+                onClick={() =>
+                  setConfig({ ...config, size, win_length: Math.min(size, 5) })
+                }
+              >
+                {size}×{size}
+                {size === 15 && <span className="size-dot" />}
+              </button>
+            ))}
+          </div>
+          {![3, 4, 5, 6, 8, 10, 12, 15, 19].includes(config.size) && (
+            <p className="custom-size">
+              Đang chọn bàn {config.size}×{config.size}
+            </p>
+          )}
         </div>
-        {![3, 4, 5, 6, 8, 10, 12, 15, 19].includes(config.size) && (
-          <p className="custom-size">
-            Đang chọn bàn {config.size}×{config.size}
+        <div className="settings-section settings-win-length">
+          <span className="eyebrow section-label" id="win-length-label">
+            03 / SỐ QUÂN ĐỂ THẮNG
+          </span>
+          <div
+            className="win-options"
+            role="group"
+            aria-labelledby="win-length-label"
+          >
+            {[3, 4, 5, 6].map((length) => (
+              <button
+                key={length}
+                disabled={length > config.size}
+                aria-pressed={config.win_length === length}
+                className={config.win_length === length ? "selected" : ""}
+                onClick={() => setConfig({ ...config, win_length: length })}
+              >
+                {length} quân
+              </button>
+            ))}
+          </div>
+          <p className="win-length-note">
+            Nối {config.win_length} quân liên tiếp để thắng.
           </p>
-        )}
+        </div>
         {(config.mode === "ai" || config.mode === "spectate") && (
-          <>
-            <span className="eyebrow section-label">03 / ĐỘ KHÓ AI</span>
+          <div className="settings-section settings-difficulty">
+            <span className="eyebrow section-label">04 / ĐỘ KHÓ AI</span>
             <div className="difficulty-options">
               {(
                 [
@@ -292,7 +314,7 @@ export default function Settings({
                 </button>
               ))}
             </div>
-          </>
+          </div>
         )}
         <button className="advanced-button" onClick={onAdvanced}>
           <SlidersHorizontal size={14} /> Tùy chỉnh nâng cao{" "}
@@ -303,15 +325,12 @@ export default function Settings({
           disabled={busy}
           onClick={onStart}
         >
-          {config.mode === "online" ? "Tạo phòng mới" : "Bắt đầu ván mới"}
+          {started ? "Bắt đầu ván mới" : "Bắt đầu"}
           <ArrowUpRight size={17} />
         </button>
-        {config.mode === "online" && (
-          <button className="button secondary join-button" onClick={onJoin}>
-            Tham gia bằng mã phòng
-          </button>
-        )}
-        <p className="settings-footnote">Thiết lập áp dụng cho ván mới.</p>
+        <p className="settings-footnote">
+          Chọn thiết lập rồi nhấn Bắt đầu để chơi.
+        </p>
       </section>
       <div className="little-note">
         <span className="note-symbol">✳</span>
