@@ -48,7 +48,7 @@ export default function Board({
   const candidates = new Map(
     game.analysis?.candidates.map((c) => [
       `${c.row},${c.col}`,
-      c.probability,
+      c.combined_score ?? c.probability,
     ]) || [],
   );
   function onKey(

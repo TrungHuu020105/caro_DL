@@ -1,13 +1,20 @@
-# CaroNet checkpoint
+# CaroNet v2 và thực nghiệm
 
-`caro_policy.pt` chứa **state_dict PyTorch** của `CaroNet`. API tải với `weights_only=True`, `map_location="cpu"`.
+- caro_policy.pt: PyTorch state_dict, 8 kênh, **34.250 tham số**, nạp CPU bằng weights_only=True.
+- training.json: train/validation/test, seed/history, checkpoint tốt nhất, chỉ số theo luật/kích thước, value MSE cùng baseline 0, checksum dữ liệu/model.
+- benchmark.json: giải đấu đổi bên, khai cuộc, thắng/hòa/thua, thời gian TB/P95 và toàn bộ nước đi.
 
-`training.json` ghi chỉ số từ lần huấn luyện thực tế, bao gồm kích thước tập train/validation, seed, thời gian, loss theo epoch và độ khớp top-1 với teacher. `best_epoch` và `best_val_loss` xác định model tốt nhất; `checkpoint_sha256` và mục `dataset` giúp kiểm tra đúng checkpoint và dữ liệu. Không thay các chỉ số này bằng dữ liệu giả.
+Conv 3×3/24 kênh → 3 khối residual → policy và outcome value. Input có loại luật. Value masked pooling; policy mask ô đã đánh và ô đệm.
 
-Huấn luyện: `python -m backend.train --samples 6000 --epochs 12` tại thư mục gốc. Checkpoint có validation **policy** loss thấp nhất trong lần chạy được giữ lại, không nhất thiết là epoch cuối. Trainer chạy từ đầu bằng seed cố định, không tự tiếp tục checkpoint cũ hay so sánh các lần chạy trước.
+~~~powershell
+.\.venv\Scripts\python.exe -m backend.train --samples 6000 --epochs 18
+.\.venv\Scripts\python.exe -m backend.benchmark --pairs 1 --sizes 5 9 15 --rules freestyle exact blocked --budget-ms 80
+~~~
 
-Dữ liệu được xuất vào `backend/data/training/` với file NPZ, CSV train/validation và manifest. Chạy `python -m backend.train --export-only` để xuất mà không đổi model, hoặc `python -m backend.train --dataset backend/data/training/caro_dataset.npz --epochs 12` để học lại từ file đã lưu. Xem [hướng dẫn dữ liệu](../data/README.md).
+Chạy tại thư mục gốc bằng Python 3.10. Chọn checkpoint theo validation **policy CE + 0,5 × outcome value MSE** thấp nhất. Train/validation cùng định nghĩa loss; chỉ dùng test sau chọn checkpoint. Trainer bắt đầu lại từ seed, không tiếp tục optimizer. Dùng --model-dir để giữ thí nghiệm riêng và khởi động lại backend sau train.
 
-Dataset là các thế cờ chiến thuật tổng hợp trên 9×9, mục tiêu 3–6 quân, có các mẫu nối/chặn chuỗi và biến đổi xoay/lật. Một số thế cờ tổng hợp không phải trạng thái hợp lệ từ self-play. Teacher trong `rules.py` dùng điểm đoạn mở. Value head học nhãn tương đối từ cùng teacher và không phải xác suất thắng; phiên bản AI hiện tại dùng policy, heuristic và tìm kiếm, không dùng value để chọn nước.
+CNN thuần argmax policy, không có tactical override. Chiến thuật thuần không chạy CNN. Engine lai kiểm tra thắng/chặn, kết hợp điểm; mức khó alpha-beta có value trong đánh giá lá. Riêng 3×3 minimax chính xác.
 
-Đây là mô hình học tập nhỏ. Không có tuyên bố sức mạnh thi đấu chuyên nghiệp hoặc bảo đảm thắng. Chế độ khó trên 3×3 bổ sung minimax chính xác.
+Không suy ra tỷ lệ thắng từ top-1. Value chưa hiệu chỉnh thành xác suất thắng, có thể chỉ hơn baseline 0 rất ít. Engine lai không bảo đảm mạnh hơn heuristic ở mọi ngân sách. Benchmark là số đo thực tế, không phải Elo hoặc dữ liệu minh họa.
+
+Checkpoint v1 có 5 kênh không tương thích; API báo cần huấn luyện lại và chuyển sang heuristic. Không sửa giả chỉ số JSON.

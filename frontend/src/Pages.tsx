@@ -16,7 +16,9 @@ import {
 } from "lucide-react";
 import Board, { Mark } from "./Board";
 import { MODE_NAMES } from "./Settings";
-import type { Game, ModelInfo } from "./types";
+import type { Game, GameReview, ModelInfo } from "./types";
+import Experiments, { RULE_NAMES } from "./Experiments";
+import { request } from "./api";
 
 export function Guide() {
   return (
@@ -63,7 +65,7 @@ export function Guide() {
           {
             icon: BrainCircuit,
             title: "AI học và suy nghĩ thế nào?",
-            text: "CaroNet là mạng CNN residual PyTorch với đầu policy và value, học từ dữ liệu chiến thuật tổng hợp. AI kiểm tra nước thắng/chặn và tìm kiếm bổ sung; chế độ khó dùng minimax chính xác trên bàn 3×3.",
+            text: "CaroNet học policy từ teacher chiến thuật và value từ kết quả các ván hợp lệ. Bạn có thể chọn CNN thuần, chiến thuật thuần hoặc engine kết hợp; mức khó kết hợp tìm kiếm alpha-beta, riêng 3×3 dùng minimax chính xác.",
           },
         ].map(({ icon: Icon, title, text }, i) => (
           <article className="panel guide-card" key={title}>
@@ -134,7 +136,7 @@ export function AILab({ model }: { model: ModelInfo | null }) {
         <Metric
           label="Mẫu huấn luyện"
           value={model?.training.samples?.toLocaleString("vi-VN") || "—"}
-          detail={`${model?.training.validation_samples?.toLocaleString("vi-VN") || "—"} mẫu kiểm định độc lập`}
+          detail={`${model?.training.validation_samples?.toLocaleString("vi-VN") || "—"} validation · ${model?.training.test_samples?.toLocaleString("vi-VN") || "—"} test giữ riêng`}
           icon={Database}
         />
         <Metric
@@ -148,6 +150,11 @@ export function AILab({ model }: { model: ModelInfo | null }) {
           icon={CheckCircle2}
         />
       </div>
+      {model?.load_error && (
+        <p className="form-error" role="alert">
+          {model.load_error}
+        </p>
+      )}
       <div className="lab-columns">
         <section className="panel training-chart">
           <div className="panel-heading">
@@ -259,17 +266,17 @@ export function AILab({ model }: { model: ModelInfo | null }) {
             [
               "01",
               "Đọc bàn cờ",
-              "5 kênh: quân mình, đối thủ, ô trống, mục tiêu và mặt nạ bàn.",
+              "8 kênh: quân mình, đối thủ, ô trống, mục tiêu, mặt nạ bàn và ba loại luật.",
             ],
             [
               "02",
               "Suy luận bằng CNN",
-              "Policy xếp hạng ô trống; value ước lượng thế trận từ nhãn chiến thuật.",
+              "Policy xếp hạng ô trống; value học kết quả cuối của các ván hợp lệ.",
             ],
             [
               "03",
               "Kiểm tra chiến thuật",
-              "Ưu tiên thắng ngay, chặn đối thủ và tìm kiếm theo độ khó.",
+              "Engine lai ưu tiên thắng/chặn; mức khó tìm kiếm alpha-beta bằng policy và value.",
             ],
             [
               "04",
@@ -297,13 +304,17 @@ export function AILab({ model }: { model: ModelInfo | null }) {
           checkpoint mới.
         </p>
         <pre>
-          <code>python -m backend.train --samples 6000 --epochs 12</code>
+          <code>
+            .\.venv\Scripts\python.exe -m backend.train --samples 6000 --epochs
+            18
+          </code>
         </pre>
         <p className="muted">
-          Mô hình học bắt chước bộ chấm điểm chiến thuật trên bàn 9×9 và tổng
-          quát sang kích thước khác bằng tích chập. Đây là mô hình học tập;
-          value không phải xác suất thắng đã hiệu chỉnh và AI chưa được huấn
-          luyện theo AlphaZero.
+          Huấn luyện từ các ván hợp lệ trên bàn 3×3 đến 25×25, đủ ba luật. Các
+          ván thuộc riêng từng tập; loại trùng cả khi xoay/lật thế cờ trước khi
+          augmentation. Value học kết quả thắng/hòa/thua theo phía đang đi. Đây
+          là học có giám sát từ rollout, chưa phải reinforcement learning; value
+          chưa được hiệu chỉnh thành xác suất thắng.
         </p>
         {history.length > 0 && (
           <p className="training-details">
@@ -315,6 +326,83 @@ export function AILab({ model }: { model: ModelInfo | null }) {
           </p>
         )}
       </section>
+      {model?.training.test_metrics && (
+        <section className="panel evaluation-panel">
+          <h2>Đánh giá trên tập test giữ riêng</h2>
+          <p>
+            Checkpoint chọn ở epoch {model.training.best_epoch} theo validation.
+            Test chỉ được đánh giá sau khi chọn xong checkpoint.
+          </p>
+          <div className="evaluation-values">
+            <span>
+              Policy top-1{" "}
+              <strong>
+                {(model.training.test_metrics.top1_accuracy * 100).toFixed(1)}%
+              </strong>
+            </span>
+            <span>
+              Policy CE{" "}
+              <strong>{model.training.test_metrics.policy_loss}</strong>
+            </span>
+            <span>
+              Outcome value MSE{" "}
+              <strong>{model.training.test_metrics.value_mse}</strong>
+            </span>
+            <span>
+              Trùng qua xoay/lật giữa các tập{" "}
+              <strong>
+                {model.training.dataset?.audit
+                  ?.duplicate_or_symmetric_positions_between_splits ?? "—"}
+              </strong>
+            </span>
+          </div>
+          <p className="muted">
+            Top-1 đo mức khớp nước teacher, không đo tỷ lệ thắng. Train và
+            validation dùng cùng loss: policy CE + 0,5 × value MSE.
+          </p>
+          {model.training.test_metrics.value_zero_baseline_mse != null && (
+            <p className="muted">
+              MSE nếu luôn dự đoán value = 0:{" "}
+              {model.training.test_metrics.value_zero_baseline_mse}. So sánh với
+              value MSE để xem đầu value học được nhiều hơn dự đoán trung tính
+              hay chưa.
+            </p>
+          )}
+          <details>
+            <summary>Test theo luật và kích thước</summary>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Nhóm</th>
+                    <th>Mẫu</th>
+                    <th>Policy top-1</th>
+                    <th>Value MSE</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ...Object.entries(model.training.test_metrics.by_rule).map(
+                      ([name, value]) => [RULE_NAMES[name], value] as const,
+                    ),
+                    ...Object.entries(model.training.test_metrics.by_size).map(
+                      ([name, value]) => [`${name}×${name}`, value] as const,
+                    ),
+                  ].map(([name, value]) => (
+                    <tr key={name}>
+                      <td>{name}</td>
+                      <td>{value.samples}</td>
+                      <td>{(value.top1_accuracy * 100).toFixed(1)}%</td>
+                      <td>{value.value_mse}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+      )}
+      <Experiments loaded={!!model?.loaded} />
     </div>
   );
 }
@@ -462,6 +550,11 @@ export function Statistics({
 
 export function Replay({ game, onClose }: { game: Game; onClose: () => void }) {
   const [step, setStep] = useState(game.moves.length);
+  const [review, setReview] = useState<GameReview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [practice, setPractice] = useState(false);
+  const [trial, setTrial] = useState<Game | null>(null);
   const moves = game.moves.slice(0, step);
   const board = Array.from({ length: game.config.size }, () =>
     Array(game.config.size).fill(0),
@@ -469,6 +562,64 @@ export function Replay({ game, onClose }: { game: Game; onClose: () => void }) {
   moves.forEach((m) => {
     board[m.row][m.col] = m.player;
   });
+  function jump(next: number) {
+    setStep(next);
+    setTrial(null);
+    setPractice(false);
+    setError("");
+  }
+  async function analyze() {
+    setBusy(true);
+    setError("");
+    try {
+      setReview(
+        await request<GameReview>(`/history/${game.id}/review`, {
+          method: "POST",
+        }),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function tryMove(row: number, col: number) {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const branch =
+        trial?.moves.slice(step).map((m) => ({ row: m.row, col: m.col })) || [];
+      setTrial(
+        await request<Game>(`/history/${game.id}/variation`, {
+          method: "POST",
+          body: JSON.stringify({
+            step,
+            moves: [...branch, { row, col }],
+            reply: true,
+          }),
+        }),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const terminalPrefix =
+    step === game.moves.length &&
+    (game.ended_reason === "line" || game.ended_reason === "full");
+  const opportunities = review?.events.find(
+    (event) => event.number === step + 1,
+  );
+  const shown = trial || {
+    ...game,
+    moves,
+    board,
+    analysis: null,
+    current_player: (step % 2 === 0 ? 1 : -1) as 1 | -1,
+    winning_line: step === game.moves.length ? game.winning_line : [],
+  };
   return (
     <>
       <div className="replay-summary">
@@ -487,23 +638,23 @@ export function Replay({ game, onClose }: { game: Game; onClose: () => void }) {
         </span>
       </div>
       <Board
-        game={{
-          ...game,
-          moves,
-          board,
-          winning_line: step === game.moves.length ? game.winning_line : [],
-        }}
-        canPlay={false}
+        game={shown}
+        canPlay={
+          practice &&
+          !busy &&
+          !terminalPrefix &&
+          (!trial || trial.status === "playing")
+        }
         hint={null}
-        onMove={() => {}}
+        onMove={(r, c) => void tryMove(r, c)}
         showNumbers
         compact
       />
       <div className="replay-controls">
         <button
           className="icon-button"
-          onClick={() => setStep((s) => Math.max(0, s - 1))}
-          disabled={!step}
+          onClick={() => jump(Math.max(0, step - 1))}
+          disabled={!step || busy}
           aria-label="Nước trước"
         >
           <ArrowLeft size={19} />
@@ -514,20 +665,114 @@ export function Replay({ game, onClose }: { game: Game; onClose: () => void }) {
           min={0}
           max={game.moves.length}
           value={step}
-          onChange={(e) => setStep(Number(e.target.value))}
+          onChange={(e) => jump(Number(e.target.value))}
+          disabled={busy}
         />
         <span>
           {step}/{game.moves.length}
         </span>
         <button
           className="icon-button"
-          onClick={() => setStep((s) => Math.min(game.moves.length, s + 1))}
-          disabled={step === game.moves.length}
+          onClick={() => jump(Math.min(game.moves.length, step + 1))}
+          disabled={step === game.moves.length || busy}
           aria-label="Nước tiếp"
         >
           <MoveUpRight size={19} />
         </button>
       </div>
+      <div className="review-actions">
+        <button
+          className="button secondary"
+          disabled={busy}
+          onClick={() => void analyze()}
+        >
+          {busy ? "Đang phân tích…" : "Phân tích cơ hội sau ván"}
+        </button>
+        <button
+          className="button secondary"
+          disabled={busy || terminalPrefix}
+          onClick={() => {
+            setPractice(!practice);
+            setTrial(null);
+            setError("");
+          }}
+        >
+          {practice ? "Trở về ván gốc" : "Thử phương án khác"}
+        </button>
+      </div>
+      {practice && (
+        <div className="practice-note" role="status">
+          <p>
+            Chọn một ô trống để thử. AI sẽ đáp lại; các nước thử được giữ riêng
+            trong cửa sổ này.
+          </p>
+          {trial && (
+            <p>
+              {trial.status === "won"
+                ? `${trial.winner === 1 ? "X" : "O"} thắng trong phương án thử.`
+                : trial.status === "draw"
+                  ? "Phương án thử hòa."
+                  : `Đến lượt ${trial.current_player === 1 ? "X" : "O"}.`}
+            </p>
+          )}
+          {opportunities?.alternatives.map(([r, c]) => (
+            <button
+              key={`${r}-${c}`}
+              className="text-button"
+              disabled={busy || !!trial}
+              onClick={() => void tryMove(r, c)}
+            >
+              Thử {String.fromCharCode(65 + c)}
+              {r + 1}
+            </button>
+          ))}
+        </div>
+      )}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      {review && (
+        <div className="game-review">
+          <h3>Cơ hội chiến thuật</h3>
+          <p>{review.scope}</p>
+          <div className="review-summary">
+            {Object.entries(review.summary).map(([player, counts]) => (
+              <span key={player}>
+                {player === "1" ? "X" : "O"}: bỏ lỡ {counts.missed_win} nước
+                thắng, {counts.missed_block} nước chặn · {counts.double_threat}{" "}
+                thế bị đe dọa kép
+              </span>
+            ))}
+          </div>
+          {review.events.length ? (
+            <ol>
+              {review.events.map((event) => (
+                <li key={event.number}>
+                  <button
+                    className="text-button"
+                    disabled={busy}
+                    onClick={() => jump(event.number - 1)}
+                  >
+                    Trước nước {event.number} · {event.player === 1 ? "X" : "O"}
+                  </button>
+                  <p>
+                    {event.explanation}
+                    {event.alternatives.length > 0 &&
+                      ` Ô đề xuất: ${event.alternatives.map(([r, c]) => `${String.fromCharCode(65 + c)}${r + 1}`).join(", ")}.`}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>
+              Không tìm thấy cơ hội thắng/chặn ngay bị bỏ lỡ trong các nước đã
+              chơi.
+            </p>
+          )}
+        </div>
+      )}
       <button className="button secondary" onClick={onClose}>
         Đóng xem lại
       </button>

@@ -160,6 +160,22 @@ export function AdvancedSettings({
         </select>
       </label>
       <label className="field-label">
+        Engine AI
+        <select
+          value={config.ai_variant || "hybrid"}
+          onChange={(e) =>
+            setConfig({
+              ...config,
+              ai_variant: e.target.value as GameConfig["ai_variant"],
+            })
+          }
+        >
+          <option value="hybrid">Kết hợp CNN, chiến thuật và tìm kiếm</option>
+          <option value="cnn">CNN thuần · trực tiếp từ policy</option>
+          <option value="heuristic">Chiến thuật thuần · không dùng CNN</option>
+        </select>
+      </label>
+      <label className="field-label">
         Thời gian mỗi lượt
         <select
           value={config.time_limit}
@@ -354,16 +370,19 @@ export default function Settings({
             >
               <Globe2 size={15} /> Tham gia bằng mã phòng
             </button>
-            {canResume && (
-              <button
-                className="button secondary room-action"
-                disabled={busy}
-                onClick={onResume}
-              >
-                Kết nối lại phòng <ArrowUpRight size={14} />
-              </button>
-            )}
           </>
+        )}
+        {canResume && (
+          <button
+            className="button secondary room-action"
+            disabled={busy}
+            onClick={onResume}
+          >
+            {config.mode === "online"
+              ? "Kết nối lại phòng"
+              : "Tiếp tục ván đã lưu"}{" "}
+            <ArrowUpRight size={14} />
+          </button>
         )}
         <p className="settings-footnote">
           Chọn thiết lập rồi nhấn Bắt đầu để chơi.

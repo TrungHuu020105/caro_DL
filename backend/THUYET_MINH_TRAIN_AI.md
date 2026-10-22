@@ -1,424 +1,259 @@
-**THUYẾT MINH QUÁ TRÌNH HUẤN LUYỆN AI CARO LAB**
+# Thuyết minh huấn luyện và đánh giá AI CaroNet v2
 
-Tài liệu này mô tả đúng phiên bản mã nguồn và checkpoint hiện có. Các kết quả thực nghiệm lấy từ `models/training.json` và được đối chiếu bằng cách nạp lại `models/caro_policy.pt`. Các thống kê trùng lặp được tính trên tensor đầu vào trong dataset đã xuất, không phải số liệu ước đoán.
+Tài liệu phản ánh mã nguồn và các artifact hiện tại. Số liệu dưới đây đọc từ models/training.json, models/benchmark.json và data/training/manifest.json. Có thể đối chiếu checksum, nạp lại checkpoint, chơi lại dataset và chạy benchmark bằng Python 3.10.
 
-1. **Mô tả phương pháp bằng một câu**
+## 1. Bài toán và vai trò deep learning
 
-   Caro Lab huấn luyện mạng CNN residual tên CaroNet bằng học có giám sát, sử dụng các thế cờ tổng hợp và nhãn do một bộ chấm điểm chiến thuật tạo ra. Khi chơi, hệ thống kết hợp policy của CNN với luật thắng/chặn và thuật toán tìm kiếm.
+Cho bàn n×n, phía đang đi, số quân thắng K và loại luật, cần xếp hạng ô trống và đánh giá kết quả kỳ vọng. Game hỗ trợ n từ 3 đến 25, K từ 3 đến min(n,6), ba luật:
 
-   Có thể gọi cách huấn luyện này là **học bắt chước bộ đánh giá chiến thuật**, hoặc **supervised distillation from a tactical teacher**. Teacher trong dự án là thuật toán viết tay; student là CNN được cập nhật trọng số bằng backpropagation.
+- Tự do: ít nhất K quân liên tiếp.
+- Chính xác: đúng K, quá K không thắng.
+- Caro: đúng K, không bị quân đối thủ chặn cả hai đầu; mép bàn không tính là quân chặn.
 
-   Dự án hiện chưa huấn luyện bằng reinforcement learning, chưa có vòng lặp AlphaZero/MCTS và chưa tự học thêm từ người chơi. Chế độ AI đấu AI là chế độ chơi, không phải một tiến trình huấn luyện tự động.
+Mạng CNN thực sự được train bằng gradient và checkpoint thực sự được nạp khi chơi. Có ba engine để tách ảnh hưởng các thành phần: CNN thuần, heuristic thuần, engine lai. Game không sử dụng API AI bên ngoài.
 
-   ```text
-   Sinh thế cờ bằng NumPy
-          ↓
-   Teacher chiến thuật tạo policy/value target
-          ↓
-   Mã hóa bàn cờ thành tensor 5 kênh
-          ↓
-   Xuất train/validation ra NPZ và CSV
-          ↓
-   Huấn luyện CaroNet bằng PyTorch
-          ↓
-   Đánh giá validation sau từng epoch
-          ↓
-   Lưu checkpoint có validation policy loss thấp nhất
-          ↓
-   FastAPI nạp checkpoint để suy luận khi chơi
-   ```
+Phương pháp là **supervised policy distillation và outcome regression từ rollout**. Không gọi đây là AlphaZero hoặc reinforcement learning: policy target vẫn do teacher tạo, chưa cập nhật policy theo lợi tức tự chơi của chính mạng.
 
-2. **Các file cần mở khi trình bày**
+## 2. Pipeline
 
-   | File | Vai trò |
-   | --- | --- |
-   | [dataset.py](dataset.py) | Sinh thế cờ, tạo nhãn, xuất và nạp dataset |
-   | [app/rules.py](app/rules.py) | Chấm điểm chiến thuật và kiểm tra chuỗi thắng |
-   | [app/network.py](app/network.py) | Kiến trúc CNN, residual block và hàm `encode()` |
-   | [train.py](train.py) | Loss, optimizer, vòng lặp train/validation, lưu best model |
-   | [app/ai.py](app/ai.py) | Suy luận CNN và kết hợp chiến thuật/tìm kiếm |
-   | [data/training/train.csv](data/training/train.csv) | 6.000 mẫu train ở dạng có thể mở xem |
-   | [data/training/validation.csv](data/training/validation.csv) | 1.200 mẫu validation |
-   | [data/training/caro_dataset.npz](data/training/caro_dataset.npz) | Các tensor và bàn cờ gốc dùng để huấn luyện |
-   | [data/training/manifest.json](data/training/manifest.json) | Schema, seed, kích thước và checksum của dữ liệu |
-   | [models/caro_policy.pt](models/caro_policy.pt) | Trọng số của model được chọn |
-   | [models/training.json](models/training.json) | Kết quả theo epoch, best epoch và liên kết với dataset |
+~~~text
+Rollout chiến thuật ngẫu nhiên hóa, đi hợp lệ và dừng khi kết thúc
+    → gán toàn bộ ván cho train / validation / test
+    → loại trùng quỹ đạo và vị trí theo xoay/lật
+    → policy target từ teacher, value target từ kết quả ván
+    → xuất NPZ, CSV và manifest có checksum
+    → train CNN, augmentation trong batch
+    → chọn checkpoint theo validation loss
+    → đánh giá một lần trên test sau chọn checkpoint
+    → chạy giải đấu CNN / heuristic / hybrid
+~~~
 
-   `data/caro.sqlite3` lưu kết quả các ván đã chơi. File này không được trainer dùng làm dữ liệu huấn luyện trong phiên bản hiện tại.
+Mã chính: dataset.py, train.py, app/network.py, app/rules.py, app/ai.py và benchmark.py.
 
-3. **Bài toán mà mạng neural cần học**
+## 3. Tạo dữ liệu hợp lệ
 
-   Một mẫu đầu vào gồm trạng thái bàn cờ, quân đang đến lượt và số quân liên tiếp cần có để thắng. Mạng học đồng thời hai đầu ra:
+Mỗi rollout khởi đầu bàn trống, X đi trước và hai phía thay phiên. Chỉ đặt vào ô trống. Sau mỗi nước gọi đúng bộ luật đang chọn; dừng ngay khi thắng hoặc khi hết ô.
 
-   - **Policy:** phân phối điểm ưu tiên trên các ô trống. Với bàn 9×9, đầu ra có 81 phần tử.
-   - **Value:** một số trong khoảng [-1, 1], được huấn luyện để khớp điểm thế trận do teacher tạo.
+Chính sách sinh ván ưu tiên nước thắng/chặn đã phát hiện; ở thế khác dùng điểm chiến thuật và ngẫu nhiên hóa để tạo đa dạng. Teacher là heuristic giáo dục, không phải bộ giải tối ưu hoặc dữ liệu chuyên gia. Một số lựa chọn phòng thủ của engine chạy thật được kiểm tra kỹ hơn teacher sinh nhãn.
 
-   Policy trả lời “nên ưu tiên đi ở đâu?”. Value là một nhiệm vụ phụ đánh giá thế trận. Policy ở đây không phải phân phối xác suất thắng của từng nước đi; value cũng chưa phải xác suất thắng đã được hiệu chỉnh.
+Các thế cờ được lấy từ tiền tố của những ván đã hoàn tất. Không thêm motif bằng cách ghi đè quân. Do đó số quân, lượt và lịch sử nguồn có thể kiểm chứng.
 
-   Mạng dùng góc nhìn của người đang đi. Vì vậy, ở kênh đầu vào, “quân mình” có thể là X hoặc O, tùy lượt.
+| Tập | Số mẫu | Số ván nguồn |
+|---|---:|---:|
+| Train | 6000 | 622 |
+| Validation | 1200 | 131 |
+| Test | 1200 | 135 |
 
-4. **Dữ liệu được tạo ra như thế nào?**
+Lần chạy này bao phủ **tất cả kích thước 3–25** và ba loại luật. Mục tiêu K được chọn phù hợp kích thước. Số mẫu giữa các kích thước/luật không hoàn toàn bằng nhau; AI Lab có chỉ số theo nhóm để nhận biết khác biệt.
 
-   Hàm `generate_split()` trong `dataset.py` sinh từng mẫu theo các bước sau:
+### Tránh rò rỉ
 
-   a. Tạo bàn 9×9 gồm toàn ô trống. Quy ước dữ liệu gốc: X = 1, O = -1, ô trống = 0.
+Mỗi ván chỉ thuộc một tập. Không chỉ dựa vào ID: quỹ đạo nước đi cũng có canonical hash qua 8 phép xoay/lật. Vị trí được chuẩn hóa theo góc nhìn người đang đi và xoay/lật, kèm n/K/luật. Một tập fingerprint chung ngăn lặp vị trí trong hoặc giữa các tập.
 
-   b. Chọn mục tiêu thắng K theo phân phối:
+Sau khi tách tập mới xoay/lật mẫu lưu và augmentation trong batch. Hai thế đối xứng không được đưa sang hai tập khác nhau.
 
-   | K | Xác suất sinh | Số mẫu train thực tế | Số mẫu validation thực tế |
-   | --- | ---: | ---: | ---: |
-   | 3 quân | 20% | 1.179 | 250 |
-   | 4 quân | 20% | 1.185 | 244 |
-   | 5 quân | 50% | 3.023 | 598 |
-   | 6 quân | 10% | 613 | 108 |
-   | Tổng | 100% | 6.000 | 1.200 |
+load_dataset kiểm tra toàn bộ tensor, lượt, ô đệm và policy. Nó chơi lại quỹ đạo, xác nhận kết thúc đúng, không đi sau thắng, nhãn outcome và mỗi mẫu đúng là một tiền tố của ván nguồn. Toàn bộ dataset hiện tại đã qua kiểm tra này: không trùng vị trí đối xứng/quỹ đạo giữa các tập, không sai lượt hoặc trạng thái kết thúc dùng làm đầu vào.
 
-   Đây là xác suất lấy mẫu, nên số lượng thực tế không nhất thiết bằng đúng tỷ lệ nhân với tổng mẫu.
+### File dữ liệu
 
-   c. Chọn ngẫu nhiên từ 0 đến 32 vị trí khác nhau và gán X/O xen kẽ. Người đến lượt được xác định từ số quân đã gán ban đầu.
+- data/training/caro_dataset.npz giữ toàn bộ tensor và quỹ đạo nguồn.
+- train.csv, validation.csv, test.csv cho phép xem bàn và target.
+- manifest.json ghi seed, cấu trúc mảng và checksum.
 
-   d. Với xác suất 65%, thử chèn một motif chiến thuật: chọn một trong bốn hướng ngang, dọc, chéo xuống hoặc chéo lên; nếu đoạn dài K nằm trong bàn, đặt K-1 quân cùng phía và để trống một vị trí trong đoạn. Motif có thể thuộc phía đang đi hoặc đối thủ, giúp tạo ví dụ nối chuỗi và chặn chuỗi.
+NPZ dùng canvas 25×25 để lưu mảng đồng nhất. sizes giữ kích thước thật; mask phân biệt ô đệm. CSV cắt về đúng bàn thật. Trainer cũng nhóm batch theo kích thước và cắt n×n trước suy luận.
 
-   **65% là xác suất thử chèn, không phải cam kết 65% mẫu cuối có motif**, vì đoạn được chọn có thể vượt biên và bị bỏ qua.
+## 4. Mã hóa 8 kênh
 
-   e. Xoay bàn ngẫu nhiên 0°, 90°, 180° hoặc 270°; sau đó lật trái–phải với xác suất 50%. Nhãn được tính sau biến đổi, nên khớp với bàn cờ cuối cùng.
+| Kênh | Nội dung |
+|---|---|
+| 0 | Quân của phía đang đi |
+| 1 | Quân đối thủ |
+| 2 | Ô trống trên bàn thật |
+| 3 | Hằng số K/6 trên bàn thật |
+| 4 | Mặt nạ bàn thật |
+| 5–7 | One-hot luật tự do, chính xác, caro |
 
-   Đây là augmentation lúc tạo dataset. Một mẫu được biến đổi rồi lưu lại; chương trình không tăng 6.000 mẫu thành 48.000 mẫu, và không xoay/lật lại mỗi epoch.
+Ngoài bàn thật tất cả kênh bằng 0. Mạng phân biệt được cùng một thế cờ nhưng khác K hoặc khác luật, thay vì chỉ sửa luật ở bước kiểm tra thắng.
 
-   f. Chạy teacher trên bàn đã tạo để lấy policy target và value target; mã hóa đầu vào và lưu mẫu.
+## 5. Kiến trúc CaroNet
 
-   Có hai tập được sinh riêng: train dùng seed 42, validation dùng seed 43. Validation có `max(100, samples // 5)` mẫu. Với 6.000 mẫu train, tổng dữ liệu là 7.200 mẫu, tỷ lệ train:validation = 5:1, tương đương khoảng 83,33%:16,67%, không phải 80%:20% của tổng.
+Tổng số tham số: **34.250**.
 
-   Các mẫu là thế cờ tổng hợp, không phải 6.000 ván hoàn chỉnh. Việc chèn motif có thể làm thay đổi cân bằng số quân hoặc tạo trạng thái đã có chuỗi thắng. Generator hiện chưa bảo đảm mọi mẫu là một trạng thái hợp lệ xuất phát từ một ván chơi thực sự.
+~~~text
+Input: (batch, 8, n, n)
+  Conv 3×3, 24 kênh + ReLU
+  3 residual blocks, mỗi block 2 Conv 3×3, 24 kênh
+  ├─ Policy: Conv 1×1 24→16 + ReLU → Conv 1×1 16→1 → flatten
+  └─ Value: masked average pooling → Linear 24→32 + ReLU → Linear 32→1 + tanh
+~~~
 
-5. **Teacher tạo nhãn policy ra sao?**
+Policy logits tại ô đã có quân/ô đệm được mask bằng số âm lớn trước softmax. Value pooling chỉ lấy trung bình trong mask. Không cần lớp fully connected phụ thuộc kích thước bàn cho policy.
 
-   Hàm `segments()` liệt kê tất cả các đoạn dài K nằm hoàn toàn trong bàn, theo bốn hướng. Với mỗi đoạn, `tactical_scores()` đếm số quân mình và số quân đối thủ.
+Mạng có thể suy luận các kích thước khác nhau nhờ tích chập. Phiên bản này đồng thời có dữ liệu của nhiều kích thước, và có đánh giá theo từng kích thước; không chỉ dựa vào giả định tổng quát hóa từ 9×9.
 
-   Nếu đoạn không có quân đối thủ, teacher cộng điểm tấn công cho các ô trống của đoạn đó. Nếu đoạn không có quân mình, teacher cộng điểm phòng thủ. Đoạn có cả hai bên không đóng góp các điểm này. “Đoạn mở” ở đây nghĩa là đoạn không chứa quân cản bên trong, không có nghĩa thuật toán đã đánh giá đầy đủ hai đầu mở theo mọi luật caro.
+## 6. Nhãn policy và value
 
-   Dãy trọng số cơ sở là:
+Teacher tạo điểm các đoạn có thể nối, xét K và luật. Nếu có thắng ngay, policy tập trung vào ô thắng; nếu cần chặn, tập trung vào ô đe dọa. Các thế khác dùng phân phối mềm từ điểm chiến thuật. Đây là ưu tiên chọn nước, không phải xác suất thắng theo ô.
 
-   ```python
-   [0, 2, 18, 180, 20000, 2000000, 200000000]
-   ```
+Value target:
 
-   Sau đó `weights[K - 1] = 1e7`: đoạn có K-1 quân cùng phía được ưu tiên rất cao vì đi vào ô trống còn lại có thể hoàn thành chuỗi. Điểm phòng thủ nhân 0,96 so với điểm tấn công cùng cấu hình. Một ô thuộc nhiều đoạn có lợi sẽ nhận tổng các đóng góp.
+~~~text
+z = winner × player_to_move
+winner: X=+1, O=−1, hòa=0
+z ∈ {−1, 0, +1}
+~~~
 
-   Teacher còn cộng một điểm ưu tiên trung tâm:
+Ví dụ X thắng: mẫu ở lượt X có nhãn +1; mẫu ở lượt O có nhãn −1. Nhãn có nguồn gốc từ kết quả ván, không phải chênh lệch điểm tấn công/phòng thủ gần 0 của phiên bản cũ.
 
-   ```text
-   center_bonus(r,c) = 1 / (1 + |r - center| + |c - center|)
-   ```
+Value vẫn phụ thuộc chất lượng/chính sách rollout. Cùng một thế có thể có nhiều kết quả nếu người chơi lựa chọn khác. Không diễn giải trực tiếp value hoặc (value+1)/2 thành xác suất thắng đã hiệu chỉnh.
 
-   Ô đã có quân được đánh dấu điểm -1 để loại khỏi các nước đi hợp lệ.
+## 7. Huấn luyện và chọn checkpoint
 
-   Ví dụ minh họa với K = 5, một hàng có cấu hình:
+| Tham số | Giá trị |
+|---|---|
+| Python | 3.10, chạy trong .venv |
+| Seed | 42 |
+| Optimizer | AdamW |
+| Learning rate | 0,0015 |
+| Weight decay | 0,0001 |
+| Batch size tối đa | 128, nhóm theo kích thước |
+| Epoch | 18 |
+| Gradient clipping | norm tối đa 2 |
+| Value loss weight | 0,5 |
+| Thiết bị | CPU, tối đa 4 luồng PyTorch |
 
-   ```text
-   Cột:  A B C D E F G H I
-         O X X X X . . . .
-   ```
+Loss:
 
-   Khi X đến lượt, ô F hoàn thành năm quân X liên tiếp nên được teacher ưu tiên cao. Đây là ví dụ giải thích nguyên lý, không phải trích một dòng cụ thể từ CSV.
+~~~text
+L_policy = mean[-sum(q * log_softmax(policy_logits))]
+L_value  = mean[(predicted_value - z)^2]
+L_total  = L_policy + 0.5 * L_value
+~~~
 
-   Điểm teacher được đổi thành phân phối nhãn mềm. Với ô trống i có điểm s_i:
+Train và validation cùng định nghĩa total loss. Khi train, xoay/lật đồng thời tensor input và policy; value không đổi dưới đối xứng. Khi validation/test không augmentation ngẫu nhiên.
 
-   ```text
-   z_i = 1,1 × log(1 + max(s_i, 0))
-   q_i = exp(z_i - max(z)) / Σ_j exp(z_j - max(z))
-   ```
+Sau mỗi epoch đánh giá validation, lưu checkpoint nếu total validation loss tốt hơn. Tập test không tham gia chọn epoch hoặc hyperparameter. Sau chọn xong, nạp lại checkpoint tốt nhất rồi đánh giá test. Training là offline, bắt đầu từ seed; không tự tiếp tục optimizer cũ sau mỗi lần chạy.
 
-   Ô đã có quân nhận logit -1e9 và xác suất gần bằng 0. Trừ logit lớn nhất giúp tính softmax ổn định hơn. `q` có tổng bằng 1 và có thể phân bổ trọng số cho nhiều ô, thay vì chỉ có một nhãn one-hot.
+| Chỉ số lần chạy hiện tại | Kết quả |
+|---|---:|
+| Epoch tốt nhất | 18 |
+| Validation total loss | 4.04132 |
+| Validation policy top-1 | 44.75% |
+| Test total loss | 4.10984 |
+| Test policy CE | 3.65439 |
+| Test policy top-1 | 45.50% |
+| Test outcome value MSE | 0.91089 |
+| Test MSE nếu luôn dự đoán value=0 | 0.91583 |
+| Thời gian sinh/xuất dữ liệu và train/evaluate | 113.3 giây |
 
-   Cột `teacher_move` trong CSV là tọa độ của `argmax(q)` để đọc nhanh. Trainer dùng toàn bộ `policy_json`/tensor `policy`, không chỉ dùng cột này.
+Top-1 là tỷ lệ argmax policy trùng argmax teacher. Khi teacher cho nhiều ô ngang nhau, top-1 chỉ đối chiếu một argmax; đây không phải tỷ lệ thắng hay điểm tối ưu của ván.
 
-6. **Nhãn value được tạo ra như thế nào?**
+**Value chỉ hơn baseline 0 một ít trong lần chạy này.** Việc đổi nhãn và đưa value vào engine không tự chứng minh đầu value đã mạnh. Baseline và chỉ số nhóm được hiển thị để đánh giá đúng mức cải thiện.
 
-   Teacher được chạy từ hai góc nhìn. Gọi A là điểm ô tốt nhất từ góc nhìn người đang đi, D là điểm ô tốt nhất từ góc nhìn đối thủ:
+Checkpoint SHA-256: 7f8744b20394b94309fb42932d8b02be8a717a5d1a46818d3529bc5dd372a956
 
-   ```text
-   v_target = tanh((log(1 + A) - log(1 + D)) / 4)
-   ```
+Dataset tensor fingerprint: 2378e08f42f522919598182d6515795317a12f255291c53502d86a52a42be3d6
 
-   Tanh giới hạn giá trị đầu ra trong [-1, 1]. Dấu dương/âm biểu diễn sự chênh lệch giữa hai điểm heuristic. Đây không phải nhãn lấy từ kết quả thắng/thua thật.
+SHA-256 đọc theo chunk, không sử dụng hashlib.file_digest, tương thích Python 3.10. Seed cố định tái lập tensor với cùng generator/thư viện; timestamp trong metadata có thể làm hash cả file NPZ khác dù tensor giống nhau.
 
-   Trong dataset hiện có, value target thực tế chỉ trải trong khoảng khoảng **-0,010205 đến +0,010205**. Nguyên nhân là cả hai phía đều được chấm bằng tổng tấn công và phòng thủ có hệ số gần nhau, nên hai điểm lớn nhất thường rất gần nhau. Vì vậy chưa nên trình bày value head như một bộ tiên đoán thắng/thua mạnh. Cần cải thiện nhãn này nếu muốn dùng value cho tìm kiếm sau này.
+## 8. AI chọn nước khi chơi
 
-7. **Đầu vào 5 kênh của CNN**
+### CNN thuần
 
-   Hàm `encode()` tạo tensor `(5, N, N)` kiểu float32:
+Chỉ lấy policy argmax trên ô hợp lệ, không có bộ thắng/chặn hoặc minimax che kết quả CNN. Mức khó không thay đổi định nghĩa engine thuần này.
 
-   | Kênh | Giá trị tại mỗi ô | Ý nghĩa |
-   | --- | --- | --- |
-   | 0 | 1 nếu có quân của người đang đi, còn lại 0 | Quân mình |
-   | 1 | 1 nếu có quân của đối thủ, còn lại 0 | Quân đối thủ |
-   | 2 | 1 nếu ô trống, còn lại 0 | Ô được phép đặt quân |
-   | 3 | K/6 tại mọi ô | Điều kiện số quân để thắng |
-   | 4 | 1 tại mọi ô trong bàn | Kênh mặt nạ bàn |
+### Chiến thuật thuần
 
-   Với bàn 9×9 và batch 128, tensor đầu vào có kích thước `(128, 5, 9, 9)`. Ba chiều cuối là số kênh, chiều cao và chiều rộng; chiều đầu là số mẫu trong batch.
+Không chạy mạng neural. Dùng điểm đoạn mở, kiểm tra thắng theo đúng luật, tìm phòng thủ loại bỏ các nước thắng ngay. Với luật caro, có thể chặn ở một đầu chung để vô hiệu hóa nhiều ô thắng; không kết luận thua chỉ vì đếm thấy hai ô thắng.
 
-   Kênh 4 hiện luôn bằng 1 trên bàn cờ. Trainer không ghép các bàn kích thước khác nhau bằng padding trong cùng batch. Loại luật `freestyle/exact/blocked` cũng chưa được đưa thành kênh đầu vào.
+### Engine lai
 
-8. **Kiến trúc CaroNet và số tham số**
+Chạy CNN, chuẩn hóa điểm CNN/chiến thuật và kết hợp theo độ khó. Ưu tiên thắng ngay, sau đó phòng thủ khi cần. Mức khó trên 3×3 dùng minimax chính xác.
 
-   ```text
-   Input: B × 5 × N × N
-          ↓
-   Conv 3×3: 5 → 24, padding=1, stride=1 + ReLU
-          ↓
-   3 residual blocks, giữ nguyên 24 kênh
-          ↓
-   Feature map: B × 24 × N × N
-          ├─ Policy: Conv 1×1 24→16 + ReLU → Conv 1×1 16→1
-          │          → flatten → mask ô đã có quân
-          │          → B × N² logits
-          └─ Value: AdaptiveAvgPool2d(1) → flatten 24 chiều
-                     → Linear 24→32 + ReLU → Linear 32→1 + Tanh
-                     → B giá trị
-   ```
+Trên bàn lớn hơn, mức khó dùng alpha-beta negamax với iterative deepening đến tối đa 4 ply, tối đa 10 ứng viên gốc và 6 ứng viên ở nhánh thường; nhánh buộc phòng thủ được xét riêng. Nếu hết ngân sách giữ kết quả vòng độ sâu đã hoàn thành. Tập ứng viên hữu hạn vẫn có thể bỏ lỡ nước tốt.
 
-   Mỗi residual block thực hiện:
+Đánh giá lá thực sự gọi policy/value CNN. Value được phối hợp với đánh giá tiềm năng đoạn cờ, thay vì chỉ trả value để trang trí. API ghi số nút, độ sâu hoàn thành, số lần dùng value, điểm thành phần và nguồn quyết định.
 
-   ```text
-   output = ReLU(x + Conv2(ReLU(Conv1(x))))
-   ```
+Ngân sách mặc định khi chơi khó là 250 ms cho phần tìm kiếm. Ngân sách kiểm tra tại biên nút; bước chuẩn bị/suy luận đang chạy không bị ngắt giữa chừng nên elapsed có thể vượt ngân sách. Đây không phải bảo đảm thời gian thực cứng.
 
-   Nhánh cộng tắt giữ lại x và giúp việc tối ưu các lớp sâu thuận lợi hơn; đây là ý tưởng residual learning. CaroNet là kiến trúc nhỏ tự định nghĩa, không phải ResNet-18 và không dùng trọng số ImageNet. Tham khảo cơ sở của kết nối residual trong [bài báo của He và cộng sự](https://arxiv.org/abs/1512.03385).
+## 9. Benchmark sức chơi
 
-   Conv 3×3 học quan hệ giữa các ô lân cận; padding=1 và stride=1 giữ kích thước không gian. Các khái niệm này được mô tả trong [tài liệu Conv2d của PyTorch](https://docs.pytorch.org/docs/2.9/generated/torch.nn.Conv2d.html).
+Chạy cùng thiết lập cho ba engine, với khai cuộc từ seed, mỗi cặp đổi bên X/O nhưng giữ nguyên khai cuộc. Lần đo:
 
-   | Thành phần | Số tham số |
-   | --- | ---: |
-   | Stem: Conv 5→24, kernel 3×3 | 1.104 |
-   | Ba residual block, tổng sáu Conv 24→24 | 31.248 |
-   | Policy head | 417 |
-   | Value head | 833 |
-   | Tổng | **33.602** |
+- 54 ván trên 5×5, 9×9, 15×15; đủ ba luật, K=5.
+- Seed 2026, một cặp đổi bên cho mỗi đối đầu/cấu hình.
+- Ngân sách tìm kiếm tối đa 80 ms/nước, độ khó hard; đo cả độ trễ thực tế.
+- Một engine đấu hai engine còn lại nên mỗi engine có 36 ván; tổng các cột số ván của engine đếm mỗi ván hai lần.
+- Điểm = (thắng + 0,5 × hòa)/số ván.
+- P95 là phân vị 95% thời gian mỗi nước.
 
-   Ví dụ, stem có `24 × 5 × 3 × 3 + 24 = 1.104` tham số, gồm trọng số và bias.
+| Engine | Ván | Thắng | Hòa | Thua | Điểm | TB/nước | P95 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| CNN thuần | 36 | 0 | 12 | 24 | 16.67% | 2.21 ms | 3.18 ms |
+| Chiến thuật thuần | 36 | 17 | 17 | 2 | 70.83% | 0.74 ms | 1.4 ms |
+| Kết hợp + alpha-beta | 36 | 13 | 19 | 4 | 62.50% | 72.05 ms | 84.6 ms |
 
-   Policy head chỉ dùng tích chập nên không cố định số ô đầu ra là 81: bàn N×N tạo N² logits. Value head dùng [AdaptiveAvgPool2d](https://docs.pytorch.org/docs/2.9/generated/torch.nn.AdaptiveAvgPool2d.html) để đưa feature map về 24×1×1 trước hai lớp Linear. Nhờ vậy cùng bộ trọng số nhận được nhiều kích thước bàn cờ.
+Trong lượt đo này, CNN thuần còn yếu và engine lai chưa vượt heuristic về điểm. Tìm kiếm lai dùng nhiều thời gian hơn. Đây là kết quả cần trình bày, không đổi tên top-1 thành win rate hoặc chọn riêng trận thuận lợi để quảng bá.
 
-   Tuy nhiên, chạy được nhiều kích thước là đặc tính kiến trúc; chất lượng chơi trên 15×15 hoặc 25×25 cần được đánh giá riêng vì dữ liệu train hiện chỉ có 9×9.
+54 ván là mẫu nhỏ; chưa suy ra Elo, sức mạnh chuyên nghiệp hoặc kết luận tổng quát. Thời gian ngân sách khiến số nút và nước đi có thể thay đổi theo tải máy, dù seed khai cuộc giữ nguyên. Bản ghi từng ván, luật, opening, nước đi, checksum và kết quả nằm trong benchmark.json.
 
-   Trong `forward()`, logit của ô đã có quân được thay bằng -1e9. Khi softmax, các ô này gần như không được chọn.
+AI Lab cho chọn engine, kích thước, luật, số cặp, seed và ngân sách; chạy nền, xem tiến độ và tải JSON. Chỉ một tác vụ cùng lúc. Nếu checksum model đổi, giao diện báo kết quả cũ.
 
-9. **Hàm mất mát và quá trình cập nhật trọng số**
+## 10. Phân tích sau ván và giải thích
 
-   Gọi q là policy target của teacher, p là policy dự đoán của mạng, v là value target và v_hat là value dự đoán:
+Replay kiểm tra trước từng nước: có bỏ lỡ thắng ngay không, có bỏ lỡ phòng thủ hợp lệ không, hay mọi phòng thủ một nước đều không cứu được thế cờ. Với luật caro, thử cả nước chặn đầu chung. Không gán nhãn “sai lầm chiến lược” chỉ từ value yếu.
 
-   ```text
-   L_policy = trung bình theo batch của [-Σ_i q_i × log(p_i)]
-   L_value  = trung bình theo batch của [(v_hat - v)²]
-   L_total  = L_policy + 0,25 × L_value
-   ```
+Người chơi chọn mốc và **Thử phương án khác**. Backend dựng lại tiền tố, kiểm tra nước thử, cho AI đáp lại trong nhánh riêng. Ván gốc, lịch sử và thống kê không bị thay đổi.
 
-   Policy loss là cross entropy với nhãn xác suất mềm. PyTorch hỗ trợ loại target này; trong dự án, công thức được viết trực tiếp bằng `F.log_softmax()` rồi nhân với q. Xem [CrossEntropyLoss của PyTorch](https://docs.pytorch.org/docs/2.9/generated/torch.nn.CrossEntropyLoss.html).
+Bảng điểm trong khi chơi hiển thị riêng policy, CNN, chiến thuật, kết hợp và tìm kiếm. Có trường hợp nước chọn không đứng đầu policy vì ưu tiên thắng/chặn hoặc tìm kiếm. Heatmap ghi rõ thế cờ nguồn, không gọi điểm policy là xác suất thắng.
 
-   Không nên kỳ vọng policy loss phải giảm về 0: khi target q là phân phối mềm, ngay cả p = q thì cross entropy vẫn bằng entropy của q, có thể lớn hơn 0.
+## 11. Lưu ván, đồng hồ và tương thích
 
-   Một batch đi qua các bước:
+SQLite lưu snapshot sau mỗi thay đổi, gồm token riêng tư, bàn, revision, mã phòng, đồng hồ và pause. Lịch sử công khai theo capability ID không chứa token. Server khởi động lại dựng lại các ván và lock; frontend tiếp tục bằng nút chủ động trong cùng tab.
 
-   ```python
-   logits, predicted_value = model(batch_inputs)
-   loss = policy_loss + 0.25 * value_loss
-   optimizer.zero_grad()
-   loss.backward()
-   torch.nn.utils.clip_grad_norm_(model.parameters(), 2)
-   optimizer.step()
-   ```
+Pause AI đấu AI lưu paused_at. Khi resume, cộng thời gian pause vào mốc bắt đầu lượt và tổng thời gian pause, nên giữ nguyên thời gian còn lại. Không xử timeout hoặc đặt quân trong lúc pause. Hết giờ không thể được “cứu” bằng undo.
 
-   Forward tạo dự đoán; loss đo sai khác so với teacher; backward tính gradient; optimizer dùng gradient để cập nhật các trọng số/bias. Clip gradient giới hạn chuẩn gradient ở ngưỡng 2, không phải cắt từng tham số vào khoảng [-2, 2].
+Vẫn chỉ triển khai một worker FastAPI; persistence chưa đồng bộ cache/lock nhiều process. Phiên tab cần giữ token; chưa có tài khoản/Elo.
 
-   | Thông số | Giá trị hiện tại |
-   | --- | --- |
-   | Optimizer | AdamW |
-   | Learning rate | 0,0015 |
-   | Weight decay | 0,0001 |
-   | Batch size mặc định | 128 |
-   | Epoch | 12 |
-   | Hệ số value loss | 0,25 |
-   | Gradient clipping max norm | 2 |
-   | Seed khởi tạo/thứ tự batch | 42 |
-   | Thiết bị trong trainer hiện tại | CPU |
+Tất cả trainer/dataset/API chạy bằng .venv Python 3.10. NumPy trên Python 3.10 được giới hạn dưới 2.3; SHA-256 không dùng API chỉ có từ Python 3.11. Checkpoint v1 không tương thích 8 kênh: API báo rõ và fallback heuristic. Nếu metadata không khớp checkpoint, ẩn số liệu cũ.
 
-   AdamW là optimizer có weight decay tách khỏi bước tích lũy gradient; định nghĩa tham khảo ở [tài liệu AdamW](https://docs.pytorch.org/docs/2.9/generated/torch.optim.AdamW.html). Weight decay là một biện pháp điều chuẩn, không phải bằng chứng mô hình đã hết overfitting.
+## 12. Tái lập và kiểm tra khi bảo vệ
 
-   Với 6.000 mẫu và batch 128, mỗi epoch có 47 batch: 46 batch đủ 128 mẫu và một batch 112 mẫu. Sau 12 epoch có 564 bước cập nhật optimizer. Mỗi epoch dùng `torch.randperm()` để xáo thứ tự mẫu.
+Tại thư mục gốc:
 
-   Code hiện chưa dùng learning-rate scheduler, early stopping, Dropout hay BatchNorm. Không nên đưa các kỹ thuật đó vào phần “đã triển khai”.
+~~~powershell
+.\.venv\Scripts\python.exe -m backend.train --samples 6000 --epochs 18 --seed 42
+.\.venv\Scripts\python.exe -m backend.benchmark --pairs 1 --sizes 5 9 15 --rules freestyle exact blocked --budget-ms 80
+.\.venv\Scripts\python.exe -m unittest discover -s backend/tests -v
+~~~
 
-10. **Validation và cách lưu model tốt nhất**
+Frontend:
 
-   Cuối mỗi epoch, model chuyển sang `eval()` và chạy validation trong `torch.inference_mode()`. Validation không cập nhật trọng số.
+~~~powershell
+cd frontend
+npm run build
+npm run format:check
+~~~
 
-   Hai chỉ số được tính là:
+Sau khi hai server đang chạy, tại thư mục gốc, Python đã cài Playwright/Chromium:
 
-   - `val_loss`: trung bình policy cross entropy trên 1.200 mẫu validation.
-   - `top1_accuracy`: tỷ lệ mẫu mà `argmax(policy_mạng)` bằng `argmax(policy_teacher)`.
+~~~powershell
+python frontend/tests/e2e.py
+python frontend/tests/improvements_e2e.py
+~~~
 
-   Cần phân biệt: `loss` của tập train gồm policy CE cộng 0,25 × value MSE; `val_loss` hiện chỉ có policy CE. Vì định nghĩa khác nhau, không nên diễn giải chênh lệch hai đường giống một thí nghiệm train/validation sử dụng cùng hoàn toàn một loss.
+Hiện có **33 kiểm thử backend**: luật/kích thước, minimax không thua 3×3, tính hợp lệ và nguồn gốc dữ liệu, đối xứng/tách tập, nhãn outcome, chọn checkpoint và test giữ riêng, engine độc lập, dùng value, đe dọa kép, chặn đầu chung, pause/timeout, restart/quyền phòng, replay sandbox, benchmark đổi bên và metadata khớp checkpoint.
 
-   Điều kiện chọn checkpoint là:
+Hai bộ kiểm thử trình duyệt bao gồm chế độ chờ/Bắt đầu, online/kết nối lại, di động, biểu đồ, engine/điểm thành phần, tác vụ thí nghiệm, tải JSON, phân tích replay và giữ đồng hồ qua tải lại trang.
 
-   ```python
-   if val_loss < best_val_loss:
-       best_val_loss = val_loss
-       best_epoch = epoch + 1
-       torch.save(model.state_dict(), temporary_file)
-       temporary_file.replace(checkpoint_path)
-   ```
+## 13. Giới hạn cần trình bày trung thực
 
-   File [models/caro_policy.pt](models/caro_policy.pt) luôn là checkpoint có validation policy loss thấp nhất **trong lần chạy đó**. Nếu epoch cuối kém hơn, trainer giữ model tốt hơn đã lưu trước đó.
+- Dữ liệu từ teacher/rollout tổng hợp; chưa có chuyên gia hoặc cập nhật policy theo reward.
+- Value hơn baseline ít, chưa được calibration; không hứa tìm kiếm dùng value luôn mạnh hơn.
+- Phân bố kích thước/luật/giai đoạn chưa cân bằng hoàn toàn, mỗi nhóm test có số mẫu hữu hạn.
+- Teacher top-1 có giới hạn khi nhiều nước ngang nhau và không thay thế benchmark.
+- Search giới hạn ứng viên/độ sâu và ngân sách mềm; có thể bỏ lỡ chiến thuật xa.
+- Benchmark nhỏ và phụ thuộc tải máy; chưa có Elo/kiểm định sức mạnh rộng.
+- Persistence phục hồi một process; chưa phải hệ thống nhiều worker hoặc tài khoản đám mây.
 
-   File này lưu state_dict của mạng, không lưu optimizer state để resume. Một lần gọi trainer mới khởi tạo mạng mới từ seed; không tự so sánh với model của lần chạy trước và không tự huấn luyện tiếp checkpoint cũ.
-
-11. **Kết quả thực tế đang có**
-
-   | Epoch | Train loss: CE + 0,25 MSE | Validation policy CE | Teacher top-1 |
-   | ---: | ---: | ---: | ---: |
-   | 1 | 3,88980 | 3,77506 | 16,17% |
-   | 2 | 3,64976 | 3,53235 | 24,75% |
-   | 3 | 3,35606 | 3,25774 | 35,00% |
-   | 4 | 3,11120 | 3,12173 | 36,00% |
-   | 5 | 2,95777 | 2,96798 | 41,42% |
-   | 6 | 2,83544 | 2,87467 | 45,00% |
-   | 7 | 2,74194 | 2,78426 | 47,50% |
-   | 8 | 2,68847 | 2,76776 | 47,92% |
-   | 9 | 2,64571 | 2,72221 | 48,00% |
-   | 10 | 2,61191 | 2,69941 | 46,00% |
-   | 11 | 2,59089 | 2,69249 | 51,33% |
-   | 12 | 2,57109 | **2,67932** | 51,00% |
-
-   Best epoch là **12**, do có validation policy loss nhỏ nhất. Epoch 11 có top-1 cao hơn một chút nhưng đó không phải tiêu chí chọn checkpoint.
-
-   Khi nạp lại checkpoint và chạy đúng 1.200 mẫu validation, kết quả kiểm tra là loss **2,679322255...**, khớp giá trị làm tròn 2,67932 trong JSON; top-1 đúng **612/1.200 = 51%**.
-
-   Diễn giải phù hợp: mô hình đã học cách xấp xỉ teacher trên phân phối thế cờ tổng hợp. Không được đổi “51% khớp teacher” thành “AI thắng 51% số ván”. Khi teacher có nhiều nước đồng hạng, phép đo argmax còn phụ thuộc ô nào được chọn để phá hòa.
-
-   Run hiện tại ghi thời gian 24,9 giây trong metadata. Khoảng này bao gồm chuẩn bị/nạp dữ liệu và vòng train/validation, không phải một benchmark chuẩn hóa giữa các máy.
-
-12. **Từ model đã train đến AI đang chơi**
-
-   `AIEngine` trong `app/ai.py` nạp checkpoint lên CPU, đặt model ở `eval()`, dùng `torch.inference_mode()` để suy luận. CNN trả policy cùng value; hệ thống sau đó chọn nước theo engine lai.
-
-   Đầu tiên engine thử các ô hợp lệ theo bộ luật đang chọn để tìm nước thắng ngay. Nếu có, engine đi vào nước thắng. Ở mức vừa/khó, engine cũng ưu tiên chặn nước thắng ngay của đối thủ.
-
-   Nếu chưa rơi vào các trường hợp đó, engine kết hợp điểm neural với điểm chiến thuật. Policy được chia cho xác suất lớn nhất, heuristic được log rồi chuẩn hóa theo điểm lớn nhất; hai thang điểm này được trộn với hệ số:
-
-   | Mức | Hệ số neural | Hệ số heuristic | Lựa chọn bổ sung |
-   | --- | ---: | ---: | --- |
-   | Dễ | 0,90 | 0,10 | Lấy ngẫu nhiên có trọng số trong tối đa 6 ứng viên tốt |
-   | Vừa | 0,55 | 0,45 | Chọn ứng viên có điểm kết hợp cao nhất |
-   | Khó | 0,35 | 0,65 | Thử tối đa 12 ứng viên và đánh giá nguy cơ đối thủ phản công |
-
-   Những hệ số này là tham số do lập trình viên đặt trong engine sau huấn luyện; chúng không phải tỷ lệ phần trăm sức mạnh do CNN đóng góp, cũng không được optimizer tự học.
-
-   Với bàn lớn, phần tìm kiếm ở mức khó đặt thử một quân của mình, tính heuristic tốt nhất của đối thủ và kiểm tra đối thủ có thể thắng ngay hay không. Nó chưa phải MCTS hoặc minimax sâu trên toàn bộ cây nước đi.
-
-   Riêng bàn **3×3 ở mức khó**, khi không xử lý thắng/chặn ngay, engine dùng minimax để giải thế cờ; policy CNN dùng để phá hòa giữa các lựa chọn ngang nhau. Việc chế độ này không thua trong kiểm thử không chứng minh riêng CNN đã học chơi hoàn hảo.
-
-   **Value head hiện có được train và được trả ra kết quả phân tích, nhưng không được dùng trong công thức chọn nước.** Không nên nói engine đang dùng value neural để đánh giá các nhánh tìm kiếm.
-
-   Khi thiếu checkpoint, chương trình báo đang dùng chiến thuật dự phòng; khi có checkpoint, CNN thực sự được gọi trong `predict()`.
-
-13. **Giới hạn của thực nghiệm và dữ liệu**
-
-   Đây là những điểm cần trình bày rõ nếu giảng viên hỏi chất lượng đánh giá:
-
-   a. **Dataset chưa lọc trùng giữa train và validation.** Hai tập sinh bằng seed khác nhau, nhưng điều đó không bảo đảm khác nhau hoàn toàn. So sánh byte của tensor đầu vào `(5, 9, 9)` trên dữ liệu hiện tại cho kết quả:
-
-   | Kiểm tra | Kết quả |
-   | --- | ---: |
-   | Tensor đầu vào khác nhau trong 6.000 mẫu train | 5.879 |
-   | Tensor đầu vào khác nhau trong 1.200 mẫu validation | 1.175 |
-   | Số tensor khác nhau xuất hiện ở cả hai tập | 13 |
-   | Số dòng validation có đầu vào đã xuất hiện trong train | 37/1.200, khoảng 3,08% |
-
-   Vì vậy nên gọi đây là validation sinh bằng seed riêng, chưa gọi là một tập hoàn toàn không trùng dữ liệu train. Chưa có test set thứ ba được giữ riêng cho đánh giá cuối.
-
-   b. **Teacher là heuristic.** Chất lượng nhãn phụ thuộc quy tắc chấm điểm; mô hình không được học trực tiếp từ chuyên gia hoặc kết quả thắng/thua thật.
-
-   c. **Dữ liệu có thể không phải thế cờ hợp lệ của một ván thực.** Generator chưa dừng khi xuất hiện thắng và có thể thay quân khi chèn motif.
-
-   d. **Value target tập trung gần 0**, và value chưa tham gia quyết định nước đi. Cần thiết kế nhãn và đánh giá value riêng nếu muốn dùng nó cho tìm kiếm.
-
-   e. **Train trên 9×9, suy luận nhiều kích thước.** Việc output có đúng shape ở 25×25 không tương đương đã chứng minh chơi mạnh ở 25×25.
-
-   f. **Luật exact/blocked không nằm trong input hoặc teacher.** Việc kiểm tra đúng luật của các nước thắng/chặn do engine và bộ luật xử lý, không phải mạng đã được train riêng cho từng luật.
-
-   g. **Chưa có benchmark thắng/thua giữa CNN thuần, heuristic thuần và bản lai.** Chưa có cơ sở để công bố tỷ lệ thắng, Elo hoặc khẳng định bản lai mạnh hơn một mức cụ thể.
-
-   h. **Không học online từ các ván mới.** Trọng số trong bộ nhớ khi chơi không đổi bởi một ván thắng/thua; muốn thay model phải chạy trainer và nạp checkpoint mới.
-
-   Những giới hạn này mô tả phạm vi của một mô hình học tập, đồng thời gợi ý thí nghiệm tiếp theo; không làm thay đổi việc CNN đã được huấn luyện và được sử dụng thật trong hệ thống.
-
-14. **Cách chạy để giảng viên kiểm tra lại**
-
-   Chạy tại thư mục gốc `LabCaro` bằng Python có các thư viện cần thiết.
-
-   Chỉ sinh và xuất dữ liệu, giữ nguyên checkpoint hiện có:
-
-   ```powershell
-   python -m backend.train --export-only --samples 6000 --seed 42
-   ```
-
-   Train lại từ đúng dữ liệu đã lưu, nhưng lưu model sang thư mục thí nghiệm để dễ đối chiếu với bản đang có:
-
-   ```powershell
-   python -m backend.train --dataset backend/data/training/caro_dataset.npz --epochs 12 --model-dir backend/models/demo
-   ```
-
-   Nếu bỏ `--model-dir`, trainer ghi kết quả vào `backend/models/`. Muốn tự sinh dataset mới rồi train ngay:
-
-   ```powershell
-   python -m backend.train --samples 6000 --epochs 12 --batch-size 128 --seed 42
-   ```
-
-   Khi trình bày CSV, chỉ vào `board_json`, `player_to_move`, `win_length`, `policy_json` và `value_target`. NPZ mới là file trainer nạp trực tiếp. Mỗi file NPZ còn chứa bàn cờ gốc, quân đang đi và các tensor của cả hai tập.
-
-   Seed giúp tái lập cách sinh dữ liệu và thứ tự train; không nên bảo đảm kết quả bit-identical trên mọi phiên bản thư viện và phần cứng. Manifest có checksum file và fingerprint nội dung mảng để xác nhận bộ dữ liệu; training.json có checksum checkpoint và tham chiếu dataset của lần train.
-
-15. **Đoạn nói mẫu khoảng hai phút**
-
-   “Trong đồ án này, em xây dựng AI caro theo hướng kết hợp mạng neural với thuật toán chiến thuật. Phần deep learning là CaroNet, một CNN nhỏ có ba residual block và tổng cộng 33.602 tham số, được cài đặt bằng PyTorch.
-
-   Em sinh 6.000 thế cờ train và 1.200 thế cờ validation trên bàn 9×9. Mỗi mẫu có trạng thái bàn cờ, bên đến lượt và mục tiêu từ ba đến sáu quân liên tiếp. Bộ chấm điểm chiến thuật tạo nhãn mềm cho các ô có thể đi và một nhãn điểm thế trận. Dữ liệu còn được xoay và lật để đa dạng hóa hướng xuất hiện của các mẫu chiến thuật.
-
-   Đầu vào mạng gồm năm kênh. Đầu policy dự đoán mức ưu tiên cho từng ô; đầu value học điểm thế trận phụ. Em tối ưu tổng cross entropy của policy và 0,25 lần MSE của value bằng AdamW, learning rate 0,0015, batch size 128, trong 12 epoch.
-
-   Sau mỗi epoch, em đánh giá validation và lưu model có policy loss thấp nhất. Checkpoint hiện tại ở epoch 12, validation loss 2,67932. Policy argmax trùng teacher ở 612 trên 1.200 mẫu, tương đương 51%; đây không phải tỷ lệ thắng.
-
-   Khi chơi, engine kết hợp policy với kiểm tra thắng, chặn và tìm kiếm. Value head hiện chưa dùng để chọn nước. Hạn chế của phiên bản này là dữ liệu tổng hợp, còn một số mẫu trùng giữa hai tập và chưa có benchmark thắng/thua riêng cho CNN. Hướng phát triển của em là làm sạch và tách dữ liệu tốt hơn, đánh giá CNN riêng, sau đó cải thiện nhãn bằng các ván chơi hợp lệ.”
-
-16. **Những câu hỏi giảng viên có thể đặt ra**
-
-   **“Đây có phải reinforcement learning không?”** — Chưa. Có target do teacher tạo sẵn và dùng loss có giám sát; chưa tối ưu reward từ các ván tự đấu.
-
-   **“Nếu đã có teacher thì CNN học để làm gì?”** — CNN học xấp xỉ một quy tắc đánh giá từ dữ liệu và học đặc trưng không gian thông qua gradient. Đây là bước xây dựng và kiểm chứng pipeline deep learning. Muốn chứng minh lợi ích về sức mạnh hoặc tốc độ so với teacher cần làm benchmark; phiên bản hiện tại chưa có benchmark đó.
-
-   **“51% có nghĩa AI thắng 51% không?”** — Không. Đó là top-1 agreement với teacher trên validation. Cần tổ chức các ván đấu riêng để đo win rate.
-
-   **“Tại sao epoch 12 được lưu dù epoch 11 accuracy cao hơn?”** — Tiêu chí là validation policy cross entropy nhỏ nhất, không phải top-1 lớn nhất. Cross entropy xét cả phân phối nhãn mềm, còn top-1 chỉ xét ô cao nhất.
-
-   **“Mạng có tự tạo được một nước đi không?”** — Có. Bản thân policy cho điểm các ô trống. Tuy nhiên sản phẩm hiện tại dùng engine lai, nên nước đi cuối còn có thể do bộ kiểm tra thắng/chặn hoặc tìm kiếm quyết định.
-
-   **“CNN có được huấn luyện cả 3×3 đến 25×25 không?”** — Chưa. Dữ liệu train hiện chỉ có 9×9; kiến trúc hỗ trợ đầu vào kích thước khác nhờ tích chập và adaptive pooling. Cần đánh giá từng kích thước riêng.
-
-   **“Value có phải xác suất thắng không?”** — Không. Đó là đầu hồi quy điểm heuristic, nhãn hiện gần 0 và chưa được engine dùng để chọn nước.
-
-   **“Model có thay đổi sau mỗi ván chơi không?”** — Không. Training chạy offline bằng `train.py`. Server nạp checkpoint để inference; lịch sử chơi và dataset chưa nối thành một vòng tự học.
-
-   **“Validation có thật sự tách khỏi train không?”** — Được sinh bằng seed riêng, nhưng chưa lọc trùng: hiện có 37 dòng validation trùng tensor đầu vào với train. Đó là hạn chế đã kiểm tra và cần khắc phục trước khi đánh giá kết quả cuối trên test set.
-
-17. **Các bước cải thiện hợp lý tiếp theo**
-
-   Ưu tiên làm sạch và đánh giá trước khi chỉ tăng epoch. Sinh thế cờ bằng các nước đi hợp lệ, dừng khi kết thúc ván; loại trùng rồi tách train/validation/test, có thể nhóm cả các thế cờ đối xứng để giảm rò rỉ dữ liệu. Giữ test set ngoài quá trình chọn hyperparameter và checkpoint.
-
-   Sau đó so sánh ba hệ thống: policy CNN thuần, heuristic thuần và engine lai, với cùng tập ván, luật, bên đi trước và giới hạn suy nghĩ. Báo cáo thắng/hòa/thua cùng thời gian suy luận; không suy ra win rate từ teacher accuracy.
-
-   Có thể cải thiện teacher bằng tìm kiếm sâu hơn hoặc dữ liệu chuyên gia; thu các ván hợp lệ với kết quả cuối để tạo nhãn value theo góc nhìn người đang đi. Chỉ khi có cơ chế học từ kết quả tự chơi và cập nhật policy/value tương ứng mới trình bày là phát triển thêm hướng reinforcement learning/self-play.
-
-   Nếu dùng value cho tìm kiếm, cần sửa engine để thực sự gọi và sử dụng nó, đồng thời đánh giá nhãn/value loss riêng. Nếu muốn học khác biệt giữa các luật hoặc tổng quát nhiều kích thước tốt hơn, cần đưa thông tin luật vào input và bổ sung dữ liệu/thí nghiệm theo kích thước.
+Hướng nghiên cứu tiếp theo có thể là dữ liệu expert, cân bằng giai đoạn, teacher tìm kiếm mạnh hơn, đánh giá value theo giai đoạn, nhiều seed/giải đấu lớn hơn hoặc RL tự chơi thực sự. Các hướng này cần thực nghiệm riêng, không trình bày như tính năng đã hoàn thành.

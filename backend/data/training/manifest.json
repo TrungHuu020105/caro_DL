@@ -1,17 +1,47 @@
 {
-  "format_version": 1,
-  "generator": "synthetic-tactical-v1",
-  "generated_at": "2026-10-20T00:07:08.254866+00:00",
+  "format_version": 2,
+  "generator": "legal-rollout-v2",
+  "generated_at": "2026-10-22T14:24:16.230635+00:00",
   "seed": 42,
-  "validation_seed": 43,
   "samples": 6000,
   "validation_samples": 1200,
-  "board_size": 9,
+  "test_samples": 1200,
+  "board_size": 25,
+  "board_sizes": [
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25
+  ],
   "win_lengths": [
     3,
     4,
     5,
     6
+  ],
+  "rules": [
+    "freestyle",
+    "exact",
+    "blocked"
   ],
   "board_encoding": {
     "X": 1,
@@ -23,18 +53,31 @@
     "opponent_stones",
     "empty_cells",
     "win_length/6",
-    "board_mask"
+    "board_mask",
+    "rule_freestyle",
+    "rule_exact",
+    "rule_blocked"
   ],
-  "policy_index": "row * board_size + col (zero-based)",
-  "value_target": "tanh((log1p(own_teacher_max)-log1p(opponent_teacher_max))/4)",
-  "limitations": "Synthetic tactical positions, not legal self-play records. Value targets are heuristic scores, not calibrated win probabilities.",
-  "fingerprint_sha256": "8492dd7fe9f078827a042fd2d20920460bc919763b50d80b2f6090e5e72e9f8e",
+  "policy_index": "row * canvas_size + col; padded cells have probability zero",
+  "value_target": "Completed rollout outcome * player_to_move (-1/0/+1)",
+  "split_strategy": "Whole games; global perspective/D4 deduplication before stored augmentation",
+  "audit": {
+    "duplicate_or_symmetric_positions_between_splits": 0,
+    "shared_games_between_splits": 0
+  },
+  "limitations": "Supervised imitation of a tactical rollout policy; outcome value is policy-dependent, not a calibrated win probability. Not reinforcement learning.",
+  "fingerprint_sha256": "2378e08f42f522919598182d6515795317a12f255291c53502d86a52a42be3d6",
+  "games_per_split": {
+    "train": 622,
+    "val": 131,
+    "test": 135
+  },
   "arrays": {
     "train_boards": {
       "shape": [
         6000,
-        9,
-        9
+        25,
+        25
       ],
       "dtype": "int8"
     },
@@ -53,16 +96,16 @@
     "train_inputs": {
       "shape": [
         6000,
-        5,
-        9,
-        9
+        8,
+        25,
+        25
       ],
       "dtype": "float32"
     },
     "train_policy": {
       "shape": [
         6000,
-        81
+        625
       ],
       "dtype": "float32"
     },
@@ -72,11 +115,29 @@
       ],
       "dtype": "float32"
     },
+    "train_sizes": {
+      "shape": [
+        6000
+      ],
+      "dtype": "int8"
+    },
+    "train_rules": {
+      "shape": [
+        6000
+      ],
+      "dtype": "int8"
+    },
+    "train_game_ids": {
+      "shape": [
+        6000
+      ],
+      "dtype": "int64"
+    },
     "val_boards": {
       "shape": [
         1200,
-        9,
-        9
+        25,
+        25
       ],
       "dtype": "int8"
     },
@@ -95,16 +156,16 @@
     "val_inputs": {
       "shape": [
         1200,
-        5,
-        9,
-        9
+        8,
+        25,
+        25
       ],
       "dtype": "float32"
     },
     "val_policy": {
       "shape": [
         1200,
-        81
+        625
       ],
       "dtype": "float32"
     },
@@ -113,20 +174,102 @@
         1200
       ],
       "dtype": "float32"
+    },
+    "val_sizes": {
+      "shape": [
+        1200
+      ],
+      "dtype": "int8"
+    },
+    "val_rules": {
+      "shape": [
+        1200
+      ],
+      "dtype": "int8"
+    },
+    "val_game_ids": {
+      "shape": [
+        1200
+      ],
+      "dtype": "int64"
+    },
+    "test_boards": {
+      "shape": [
+        1200,
+        25,
+        25
+      ],
+      "dtype": "int8"
+    },
+    "test_players": {
+      "shape": [
+        1200
+      ],
+      "dtype": "int8"
+    },
+    "test_win_lengths": {
+      "shape": [
+        1200
+      ],
+      "dtype": "int8"
+    },
+    "test_inputs": {
+      "shape": [
+        1200,
+        8,
+        25,
+        25
+      ],
+      "dtype": "float32"
+    },
+    "test_policy": {
+      "shape": [
+        1200,
+        625
+      ],
+      "dtype": "float32"
+    },
+    "test_value": {
+      "shape": [
+        1200
+      ],
+      "dtype": "float32"
+    },
+    "test_sizes": {
+      "shape": [
+        1200
+      ],
+      "dtype": "int8"
+    },
+    "test_rules": {
+      "shape": [
+        1200
+      ],
+      "dtype": "int8"
+    },
+    "test_game_ids": {
+      "shape": [
+        1200
+      ],
+      "dtype": "int64"
     }
   },
   "files": {
     "caro_dataset.npz": {
-      "bytes": 2088613,
-      "sha256": "fa33ef0b60b0f59a9013a653d0fae36b0632a99f4799e96d9353ba06443ef5b3"
+      "bytes": 3910999,
+      "sha256": "5c7efae91615dad0a2a0afc01bd3c078ada71ac0db64a24db39ad94363268e96"
     },
     "train.csv": {
-      "bytes": 10117840,
-      "sha256": "5f094a8e90a59f0e91049f1d496e89786075b66e0aded5b2e80a3ef07428e633"
+      "bytes": 28329780,
+      "sha256": "a03f5c862f62086379be3d143bedd100fa278f44f8fb1887143fcdc87bf6bd7a"
     },
     "validation.csv": {
-      "bytes": 2016103,
-      "sha256": "71f37d71e37e7a7665f7b73cc35e4c8880e2f43885e749943f9ffed5c1585556"
+      "bytes": 6259260,
+      "sha256": "b83e850c88f22f003a279cc5adb2cde8692522dddd516337c8250982e567c7d5"
+    },
+    "test.csv": {
+      "bytes": 6806120,
+      "sha256": "87c82064c6c125798049611260335ea3b0ab99376f7a8452002c264c96a7069c"
     }
   }
 }

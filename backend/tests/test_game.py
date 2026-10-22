@@ -3,6 +3,8 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+import os
+from unittest.mock import patch
 import numpy as np
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -115,14 +117,16 @@ class APITests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
+        cls.environment = patch.dict(os.environ, {"CARO_DATABASE_PATH":str(Path(cls.temp.name)/"tests.sqlite3"),
+                                                 "CARO_BENCHMARK_PATH":str(Path(cls.temp.name)/"benchmark.json")})
+        cls.environment.start()
         cls.client_context = TestClient(app)
         cls.client = cls.client_context.__enter__()
-        import backend.app.main as main
-        main.storage = Storage(Path(cls.temp.name)/"tests.sqlite3")
 
     @classmethod
     def tearDownClass(cls):
         cls.client_context.__exit__(None,None,None)
+        cls.environment.stop()
         cls.temp.cleanup()
 
     def create(self, **config):

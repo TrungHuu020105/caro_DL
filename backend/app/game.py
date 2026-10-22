@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from time import time
 import secrets
 from typing import Literal
@@ -12,6 +12,7 @@ class GameConfig(BaseModel):
     win_length: int | None = Field(default=None, ge=3, le=6)
     mode: Literal["ai", "local", "online", "spectate"] = "ai"
     difficulty: Literal["easy", "medium", "hard"] = "medium"
+    ai_variant: Literal["hybrid", "cnn", "heuristic"] = "hybrid"
     rule: Literal["freestyle", "exact", "blocked"] = "freestyle"
     human_player: Literal[1, -1] = 1
     time_limit: Literal[0, 15, 30, 60] = 0
@@ -49,6 +50,8 @@ class Game:
     ended_reason: str | None = None
     ended_at: float | None = None
     saved: bool = False
+    paused_at: float | None = None
+    paused_seconds: float = 0.0
 
     def __post_init__(self):
         self.board = [[0] * self.config.size for _ in range(self.config.size)]
@@ -65,7 +68,7 @@ class Game:
         raise ValueError("Bạn không có quyền truy cập ván cờ này.")
 
     def timeout(self):
-        if self.status == "playing" and self.config.time_limit and time() - self.turn_started_at >= self.config.time_limit:
+        if self.status == "playing" and self.paused_at is None and self.config.time_limit and time() - self.turn_started_at >= self.config.time_limit:
             self.status, self.winner, self.ended_reason = "won", -self.current_player, "timeout"
             self.ended_at = time()
             self.revision += 1
@@ -74,7 +77,7 @@ class Game:
 
     def place(self, row, col):
         self.timeout()
-        if self.status != "playing":
+        if self.status != "playing" or self.paused_at is not None:
             raise ValueError("Ván cờ chưa bắt đầu hoặc đã kết thúc.")
         if not (0 <= row < self.config.size and 0 <= col < self.config.size):
             raise ValueError("Nước đi nằm ngoài bàn cờ.")
@@ -82,6 +85,7 @@ class Game:
             raise ValueError("Ô này đã có quân cờ.")
         player = self.current_player
         self.board[row][col] = player
+        self.analysis = None
         self.moves.append({"row": row, "col": col, "player": player,
                            "number": len(self.moves) + 1, "at": time()})
         self.win_line = winning_line(self.board, row, col, self.config.win_length, self.config.rule)
@@ -97,6 +101,7 @@ class Game:
         self.revision += 1
 
     def undo(self):
+        self.timeout()
         if self.config.mode in ("online", "spectate"):
             raise ValueError("Chế độ này không hỗ trợ đi lại.")
         if not self.moves or self.status != "playing":
@@ -112,6 +117,35 @@ class Game:
         self.turn_started_at = time()
         self.revision += 1
 
+    def set_paused(self, paused: bool):
+        self.timeout()
+        if self.config.mode != "spectate" or self.status != "playing":
+            raise ValueError("Chỉ tạm dừng được ván AI đấu AI đang diễn ra.")
+        if paused == (self.paused_at is not None):
+            return
+        now = time()
+        if paused:
+            self.paused_at = now
+        else:
+            duration = max(0, now-self.paused_at)
+            self.turn_started_at += duration
+            self.paused_seconds += duration
+            self.paused_at = None
+        self.revision += 1
+
+    def record(self):
+        """Private persistence format; never return player tokens through the API."""
+        return {**{f.name: getattr(self, f.name) for f in fields(self) if f.name != "config"},
+                "config": self.config.model_dump()}
+
+    @classmethod
+    def restore(cls, record):
+        game = cls(GameConfig(**record["config"]))
+        for f in fields(cls):
+            if f.name != "config" and f.name in record:
+                setattr(game, f.name, record[f.name])
+        return game
+
     def view(self, token):
         player = self.player_for(token)
         return {"id": self.id, "config": self.config.model_dump(), "board": self.board,
@@ -121,4 +155,5 @@ class Game:
                 "room_code": self.room_code, "guest_joined": self.guest_token is not None,
                 "guest_name": self.guest_name, "started_at": self.started_at,
                 "created_at": self.created_at, "turn_started_at": self.turn_started_at,
+                "paused_at": self.paused_at, "paused_seconds": self.paused_seconds,
                 "ended_reason": self.ended_reason, "ended_at": self.ended_at}

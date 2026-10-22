@@ -1,4 +1,174 @@
 /* Keep dense controls legible while preserving room for the board. */
+.experiment-panel,
+.evaluation-panel {
+  padding: 24px;
+  margin-top: 24px;
+  min-width: 0;
+}
+.experiment-panel > p,
+.evaluation-panel > p {
+  color: var(--subtle);
+  line-height: 1.7;
+  margin: 12px 0 20px;
+}
+.experiment-fields {
+  border: 0;
+  padding: 0;
+  margin: 20px 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.experiment-toggle {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--subtle);
+}
+.experiment-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.experiment-progress progress {
+  accent-color: var(--accent);
+  max-width: 100%;
+}
+.benchmark-report {
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 20px;
+}
+.benchmark-report p {
+  line-height: 1.7;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.experiment-panel table,
+.evaluation-panel table,
+.decision-details table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.experiment-panel th,
+.experiment-panel td,
+.evaluation-panel th,
+.evaluation-panel td,
+.decision-details th,
+.decision-details td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.experiment-panel th,
+.evaluation-panel th,
+.decision-details th {
+  color: var(--subtle);
+  font-weight: 600;
+}
+.evaluation-values {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+.evaluation-values span {
+  background: var(--accent-soft);
+  padding: 16px;
+  border-radius: 10px;
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.evaluation-values strong {
+  display: block;
+  font-size: 22px;
+  color: var(--ink);
+  margin-top: 8px;
+}
+.decision-details {
+  min-width: 0;
+  padding: 12px 0;
+  font-size: 11px;
+}
+.decision-details summary,
+.experiment-panel summary,
+.evaluation-panel summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  padding: 8px 0;
+}
+.decision-details p {
+  line-height: 1.7;
+  margin: 10px 0;
+  color: var(--subtle);
+}
+.decision-details small {
+  color: var(--subtle);
+  line-height: 1.6;
+}
+.selected-candidate {
+  background: var(--accent-soft);
+}
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0;
+}
+.practice-note,
+.game-review {
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  line-height: 1.6;
+  font-size: 13px;
+}
+.practice-note {
+  background: var(--accent-soft);
+}
+.review-summary {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  color: var(--subtle);
+}
+.game-review ol {
+  padding-left: 20px;
+  max-height: 260px;
+  overflow: auto;
+}
+.game-review li {
+  margin-bottom: 12px;
+}
+.game-review p {
+  color: var(--subtle);
+  margin: 8px 0;
+}
+@media (max-width: 700px) {
+  .experiment-fields,
+  .evaluation-values {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .experiment-panel,
+  .evaluation-panel {
+    padding: 16px;
+  }
+  .experiment-toggle {
+    grid-column: 1 / -1;
+  }
+  .review-actions .button {
+    width: 100%;
+  }
+}
 .hero {
   min-height: 205px;
 }

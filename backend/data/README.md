@@ -1,58 +1,54 @@
-# Dữ liệu Caro Lab
+# Dataset CaroNet v2
 
-Thư mục `training/` chứa dữ liệu huấn luyện đã xuất:
+Dữ liệu từ các ván rollout **hợp lệ**, đủ ba luật, kích thước 3–25. Không đặt motif đè quân hoặc lấy trạng thái sau khi thắng. Metadata NPZ giữ đầy đủ quỹ đạo và kết quả từng ván.
 
-| File | Nội dung |
-| --- | --- |
-| `training/caro_dataset.npz` | Toàn bộ tensor và bàn cờ gốc của tập train/validation; dùng trực tiếp để huấn luyện lại |
-| `training/train.csv` | 6.000 mẫu train, mở bằng Excel hoặc đọc bằng pandas/csv |
-| `training/validation.csv` | 1.200 mẫu validation, sinh bằng seed riêng |
-| `training/manifest.json` | Seed, schema, kích thước, fingerprint dữ liệu và SHA-256 của các file |
+## Tệp và mảng
 
-`caro.sqlite3` ở thư mục này là **lịch sử ván chơi**, không phải dữ liệu train.
+- training/caro_dataset.npz: nguồn trainer nạp trực tiếp, không dùng pickle.
+- training/train.csv, validation.csv, test.csv: bàn thật/target để xem bằng Excel.
+- training/manifest.json: cấu trúc, seed, số mẫu/ván, quy tắc tách tập và SHA-256.
 
-## Mở dữ liệu NPZ
+Prefix NPZ: train_, val_, test_. Mỗi tập chứa:
 
-Chạy Python tại thư mục gốc `LabCaro`:
+| Mảng | Nội dung |
+|---|---|
+| boards | int8 (N,25,25), bàn thật ở góc trên trái, đệm bằng 0 |
+| sizes | int8 (N,), kích thước thật |
+| players | int8 (N,), X=1, O=−1 |
+| win_lengths | int8 (N,), mục tiêu K |
+| rules | int8 (N,), 0=tự do, 1=chính xác, 2=caro |
+| game_ids | int64 (N,), ván nguồn thuộc duy nhất một tập |
+| inputs | float32 (N,8,25,25), mask phân biệt bàn và ô đệm |
+| policy | float32 (N,625), ô đã đánh/đệm có xác suất 0 |
+| value | float32 (N,), kết quả ván × quân đang đi: −1/0/+1 |
 
-```python
+Trainer nhóm batch theo kích thước rồi cắt đúng n×n trước forward. CSV cắt về bàn thật: policy NPZ dùng row*25+col, policy JSON CSV dùng row*size+col.
+
+CSV có sample_id, game_id, size, rule, player_to_move, win_length, teacher_move, board_json, policy_json, value_target. BOM UTF-8 giúp Excel đọc tiếng Việt.
+
+## Chống rò rỉ và kiểm tra
+
+Gán ván vào từng tập trước chọn mẫu/augmentation. Fingerprint vị trí chuẩn hóa theo phía đang đi và 8 phép xoay/lật, kèm kích thước/K/luật. Toàn bộ quỹ đạo ván cũng được fingerprint theo đối xứng, không chỉ dựa vào ID.
+
+load_dataset kiểm tra hash tensor, shape/dtype, số quân/lượt, chưa kết thúc, policy/mask, trùng vị trí/quỹ đạo, nhãn outcome. Nó chơi lại quỹ đạo để xác nhận kết quả và nguồn gốc từng mẫu. Test được giữ riêng khỏi chọn checkpoint.
+
+## Xem hoặc sinh lại
+
+~~~python
 import numpy as np
+with np.load('backend/data/training/caro_dataset.npz', allow_pickle=False) as data:
+    n = int(data['train_sizes'][0])
+    print(data['train_boards'][0, :n, :n])
+    print(data['train_rules'][0], data['train_value'][0])
+~~~
 
-with np.load("backend/data/training/caro_dataset.npz", allow_pickle=False) as data:
-    print(data.files)
-    print(data["train_inputs"].shape)  # (6000, 5, 9, 9)
-    print(data["train_boards"][0])    # Bàn cờ đầu tiên: X=1, O=-1, trống=0
-    print(data["train_players"][0])   # Quân đang đi: 1 hoặc -1
-    print(data["train_win_lengths"][0])
-    print(data["train_policy"][0].reshape(9, 9))
-    print(data["train_value"][0])
-```
+Tại thư mục gốc, Python 3.10:
 
-Các khóa tương ứng của tập validation bắt đầu bằng `val_`. Cả hai tập có:
+~~~powershell
+.\.venv\Scripts\python.exe -m backend.train --export-only --samples 6000 --seed 42
+.\.venv\Scripts\python.exe -m backend.train --dataset backend/data/training/caro_dataset.npz --epochs 18
+~~~
 
-- `boards`: `(N, 9, 9)`, int8, bàn cờ trước nước đi.
-- `players`: `(N,)`, int8, quân đang đi.
-- `win_lengths`: `(N,)`, int8, mục tiêu 3–6 quân.
-- `inputs`: `(N, 5, 9, 9)`, float32, tensor đầu vào của CNN.
-- `policy`: `(N, 81)`, float32, phân phối nhãn teacher trên các ô; chỉ số `row*9 + col`, tính từ 0.
-- `value`: `(N,)`, float32, nhãn điểm thế trận từ -1 đến 1.
+Hash đọc theo chunk để tương thích Python 3.10. Seed tái tạo cùng tensor với cùng phiên bản generator/thư viện. Timestamp/ZIP metadata có thể đổi hash toàn file NPZ; đối chiếu thêm fingerprint_sha256 của tensor.
 
-CSV có các cột `sample_id`, `player_to_move`, `win_length`, `teacher_move`, `board_json`, `policy_json`, `value_target`. `teacher_move` là tọa độ dạng A1–I9 của phần tử policy lớn nhất. Các nhãn policy mềm được giữ nguyên trong cột JSON, không chỉ lưu một nước đi.
-
-Đây là dữ liệu chiến thuật **tổng hợp bằng code**, có các motif nối/chặn và xoay/lật, không phải lịch sử tự đấu hợp lệ hay dữ liệu thu thập từ người chơi. Value không phải xác suất thắng.
-
-## Xuất lại / dùng lại
-
-Chỉ xuất dữ liệu, không thay model hiện có:
-
-```powershell
-python -m backend.train --export-only --samples 6000 --seed 42
-```
-
-Huấn luyện bằng đúng dữ liệu đã xuất:
-
-```powershell
-python -m backend.train --dataset backend/data/training/caro_dataset.npz --epochs 12
-```
-
-Huấn luyện mặc định tự sinh và xuất dữ liệu trước khi học. `--data-dir` chọn thư mục xuất khác; `--model-dir` chọn thư mục lưu model khác. `--samples` chỉ dùng khi sinh dữ liệu mới; với `--dataset`, số mẫu lấy từ file. `--seed` điều khiển khởi tạo mô hình/thứ tự batch; seed đã sinh dữ liệu có trong manifest.
+Đây là rollout chiến thuật ngẫu nhiên hóa, không phải dữ liệu chuyên gia hoặc reinforcement learning. Policy bắt chước teacher; value phản ánh kết quả theo chính sách rollout.

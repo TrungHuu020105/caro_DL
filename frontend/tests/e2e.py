@@ -71,7 +71,7 @@ def main():
         expect(page.locator(".guide-card")).to_have_count(6)
         page.get_by_role("button",name=re.compile("AI Lab")).first.click()
         expect(page.locator(".training-chart svg[role=img]")).to_be_visible()
-        expect(page.get_by_text("33.602",exact=True)).to_be_visible()
+        expect(page.get_by_text("34.250",exact=True)).to_be_visible()
         page.screenshot(path=str(OUT/"ai-lab.png"),full_page=True)
         page.get_by_role("button",name="Chuyển giao diện tối").click()
         expect(page.locator("html")).to_have_attribute("data-theme","dark")

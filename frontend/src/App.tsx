@@ -35,6 +35,7 @@ import {
 import Board, { Mark } from "./Board";
 import Settings, { AdvancedSettings, Dialog, MODE_NAMES } from "./Settings";
 import { AILab, Guide, Replay, Statistics } from "./Pages";
+import DecisionDetails from "./DecisionDetails";
 import {
   APIError,
   gameRequest,
@@ -59,6 +60,7 @@ const DEFAULT_CONFIG: GameConfig = {
   win_length: 5,
   mode: "ai",
   difficulty: "medium",
+  ai_variant: "hybrid",
   rule: "freestyle",
   human_player: 1,
   time_limit: 0,
@@ -103,7 +105,7 @@ export default function App() {
   const [hint, setHint] = useState<Analysis | null>(null);
   const [showNumbers, setShowNumbers] = useState(false);
   const [heatmap, setHeatmap] = useState(false);
-  const [paused, setPaused] = useState(false);
+  const paused = game?.paused_at != null;
   const [aiFailed, setAiFailed] = useState(false);
   const [sound, setSound] = useState(() => readSaved("caro.sound", true));
   const [dark, setDark] = useState(() => readSaved("caro.dark", false));
@@ -155,14 +157,11 @@ export default function App() {
     setSession(next);
     setGame(data.game);
     setHint(null);
-    setPaused(false);
     setAiFailed(false);
     setError("");
     setTab("play");
-    if (data.game.config.mode === "online") {
-      saveRoomSession(next);
-      setSavedRoom(next);
-    }
+    saveRoomSession(next, data.game.config.mode === "online");
+    setSavedRoom(next);
     const ids = readSaved<string[]>("caro.ids", []);
     save(
       "caro.ids",
@@ -347,6 +346,7 @@ export default function App() {
     if (
       !game ||
       game.status !== "playing" ||
+      game.paused_at != null ||
       !game.config.time_limit ||
       now / 1000 < game.turn_started_at + game.config.time_limit ||
       !session
@@ -360,15 +360,14 @@ export default function App() {
     session,
     refresh,
     game?.config.time_limit,
+    game?.paused_at,
   ]);
 
   useEffect(() => {
     if (!game || !["won", "draw"].includes(game.status)) return;
     setHint(null);
-    if (game.config.mode === "online") {
-      saveRoomSession(null);
-      setSavedRoom(null);
-    }
+    saveRoomSession(null);
+    setSavedRoom(null);
     setHistory((old) => {
       if (old.some((g) => g.id === game.id)) return old;
       const updated = [game, ...old].slice(0, 50);
@@ -458,7 +457,9 @@ export default function App() {
           0,
           Math.floor(
             (game.ended_at || now / 1000) -
-              (game.started_at || game.created_at),
+              (game.started_at || game.created_at) -
+              (game.paused_seconds || 0) -
+              (game.paused_at ? Math.max(0, now / 1000 - game.paused_at) : 0),
           ),
         )
       : 0;
@@ -466,7 +467,11 @@ export default function App() {
     game?.status === "playing" && game.config.time_limit
       ? Math.max(
           0,
-          Math.ceil(game.turn_started_at + game.config.time_limit - now / 1000),
+          Math.ceil(
+            game.turn_started_at +
+              game.config.time_limit -
+              (game.paused_at || now / 1000),
+          ),
         )
       : null;
   const ruleText =
@@ -519,7 +524,6 @@ export default function App() {
         : settings,
     );
     setHint(null);
-    setPaused(false);
     setAiFailed(false);
     setError("");
   }
@@ -1006,8 +1010,13 @@ export default function App() {
                   </button>
                   {actual.mode === "spectate" ? (
                     <button
-                      onClick={() => setPaused(!paused)}
-                      disabled={!game || finished}
+                      onClick={() =>
+                        void act("pause", {
+                          paused: !paused,
+                          revision: game!.revision,
+                        })
+                      }
+                      disabled={!game || finished || busy}
                       aria-label={paused ? "Tiếp tục AI" : "Tạm dừng AI"}
                     >
                       {paused ? <Play size={17} /> : <Pause size={17} />}
@@ -1052,6 +1061,7 @@ export default function App() {
                     </button>
                   </div>
                 )}
+                {hint && <DecisionDetails analysis={hint} />}
                 {finished && game?.ended_reason !== "line" && (
                   <p className="end-reason">
                     {game?.ended_reason === "timeout"
@@ -1172,12 +1182,14 @@ export default function App() {
                       <small>{game.analysis.elapsed_ms}ms</small>
                     </div>
                     <p>{game.analysis.reason}</p>
+                    <DecisionDetails analysis={game.analysis} />
                     <button
                       className="text-button"
                       aria-pressed={heatmap}
                       onClick={() => setHeatmap(!heatmap)}
                     >
-                      {heatmap ? "Ẩn" : "Xem"} vùng AI đánh giá{" "}
+                      {heatmap ? "Ẩn" : "Xem"} điểm trước nước{" "}
+                      {game.analysis.position?.move_number || game.moves.length}{" "}
                       <ArrowUpRight size={13} />
                     </button>
                   </section>
@@ -1336,7 +1348,11 @@ export default function App() {
       )}
       {replay && (
         <Dialog title="Xem lại ván cờ" onClose={() => setReplay(null)} wide>
-          <Replay game={replay} onClose={() => setReplay(null)} />
+          <Replay
+            key={replay.id}
+            game={replay}
+            onClose={() => setReplay(null)}
+          />
         </Dialog>
       )}
     </div>

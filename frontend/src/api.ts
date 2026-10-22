@@ -86,7 +86,9 @@ export function socketUrl(id: string) {
 export function readRoomSession(): Session | null {
   try {
     const value = JSON.parse(
-      sessionStorage.getItem("caro.room-session") || "null",
+      sessionStorage.getItem("caro.active-session") ||
+        sessionStorage.getItem("caro.room-session") ||
+        "null",
     );
     return value &&
       typeof value.id === "string" &&
@@ -98,9 +100,12 @@ export function readRoomSession(): Session | null {
   }
 }
 
-export function saveRoomSession(value: Session | null) {
+export function saveRoomSession(value: Session | null, online = true) {
   try {
     if (value)
+      sessionStorage.setItem("caro.active-session", JSON.stringify(value));
+    else sessionStorage.removeItem("caro.active-session");
+    if (value && online)
       sessionStorage.setItem("caro.room-session", JSON.stringify(value));
     else sessionStorage.removeItem("caro.room-session");
   } catch {
