@@ -70,6 +70,7 @@ export interface Session {
   token: string;
 }
 export interface ModelInfo {
+  checkpoint_sha256?: string;
   name: string;
   architecture: string;
   loaded: boolean;
@@ -159,4 +160,49 @@ export interface GameReview {
     alternatives: number[][];
     explanation: string;
   }[];
+}
+
+export interface HumanLearningReport {
+  run_id: string;
+  decision: string;
+  message: string;
+  finished_at: string;
+  seconds: number;
+  replay_positions?: number;
+  data?: {
+    selected_train_positions: number;
+    selected_validation_positions: number;
+  };
+  history?: {
+    epoch: number;
+    loss: number;
+    val_loss: number;
+    top1_accuracy: number;
+  }[];
+  arena?: {
+    wins: number;
+    draws: number;
+    losses: number;
+    games: number;
+    score_rate: number;
+  };
+  gate?: { accepted: boolean; reasons: string[]; limitation: string };
+}
+export interface HumanLearningState {
+  active_checkpoint_sha256?: string;
+  status: "idle" | "running" | "completed" | "failed";
+  phase: string;
+  message: string;
+  completed: number;
+  total: number;
+  error: string | null;
+  min_positions: number;
+  settings: { enabled: boolean; min_new_games: number; epochs: number };
+  stats: {
+    total_games: number;
+    pending_games: number;
+    total_positions: number;
+    validation_games: number;
+  };
+  report: HumanLearningReport | null;
 }

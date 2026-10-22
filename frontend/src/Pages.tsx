@@ -18,6 +18,7 @@ import Board, { Mark } from "./Board";
 import { MODE_NAMES } from "./Settings";
 import type { Game, GameReview, ModelInfo } from "./types";
 import Experiments, { RULE_NAMES } from "./Experiments";
+import HumanLearning from "./HumanLearning";
 import { request } from "./api";
 
 export function Guide() {
@@ -65,7 +66,7 @@ export function Guide() {
           {
             icon: BrainCircuit,
             title: "AI học và suy nghĩ thế nào?",
-            text: "CaroNet học policy từ teacher chiến thuật và value từ kết quả các ván hợp lệ. Bạn có thể chọn CNN thuần, chiến thuật thuần hoặc engine kết hợp; mức khó kết hợp tìm kiếm alpha-beta, riêng 3×3 dùng minimax chính xác.",
+            text: "CaroNet học policy từ teacher và value từ kết quả ván. AI Lab có phần học bổ sung từ lịch sử người chơi, tự kiểm định trước khi áp dụng model mới. Bạn có thể chọn CNN thuần, chiến thuật thuần hoặc engine kết hợp; riêng mức khó 3×3 dùng minimax chính xác.",
           },
         ].map(({ icon: Icon, title, text }, i) => (
           <article className="panel guide-card" key={title}>
@@ -94,7 +95,13 @@ export function Guide() {
   );
 }
 
-export function AILab({ model }: { model: ModelInfo | null }) {
+export function AILab({
+  model,
+  onModelChanged,
+}: {
+  model: ModelInfo | null;
+  onModelChanged?: () => void;
+}) {
   const history = model?.training.history || [];
   const allValues = history.flatMap((h) => [h.loss, h.val_loss]);
   const low = Math.min(...allValues, 0),
@@ -155,6 +162,7 @@ export function AILab({ model }: { model: ModelInfo | null }) {
           {model.load_error}
         </p>
       )}
+      <HumanLearning onModelChanged={onModelChanged} />
       <div className="lab-columns">
         <section className="panel training-chart">
           <div className="panel-heading">
@@ -297,11 +305,12 @@ export function AILab({ model }: { model: ModelInfo | null }) {
       <section className="panel training-command">
         <div>
           <Code2 size={25} />
-          <h2>Tự huấn luyện, tự khám phá</h2>
+          <h2>Huấn luyện nền bằng terminal</h2>
         </div>
         <p>
-          Chạy tại thư mục gốc của dự án, sau đó khởi động lại backend để tải
-          checkpoint mới.
+          Lệnh này tạo model nền từ dữ liệu mô phỏng. Để học tiếp từ các ván bạn
+          đã chơi, dùng phần Học từ các ván với người chơi phía trên. Nếu chạy
+          lệnh tạo model nền, hãy khởi động lại backend sau khi hoàn thành.
         </p>
         <pre>
           <code>

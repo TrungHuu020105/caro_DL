@@ -12,7 +12,7 @@ Cho bàn n×n, phía đang đi, số quân thắng K và loại luật, cần x�
 
 Mạng CNN thực sự được train bằng gradient và checkpoint thực sự được nạp khi chơi. Có ba engine để tách ảnh hưởng các thành phần: CNN thuần, heuristic thuần, engine lai. Game không sử dụng API AI bên ngoài.
 
-Phương pháp là **supervised policy distillation và outcome regression từ rollout**. Không gọi đây là AlphaZero hoặc reinforcement learning: policy target vẫn do teacher tạo, chưa cập nhật policy theo lợi tức tự chơi của chính mạng.
+Huấn luyện nền dùng **supervised policy distillation và outcome regression từ rollout**; vòng học bổ sung dùng các ván đấu người và replay train nền. Không gọi đây là AlphaZero hoặc reinforcement learning: policy vẫn được teacher phân tích lại, cập nhật bằng supervised loss.
 
 ## 2. Pipeline
 
@@ -132,7 +132,7 @@ L_total  = L_policy + 0.5 * L_value
 
 Train và validation cùng định nghĩa total loss. Khi train, xoay/lật đồng thời tensor input và policy; value không đổi dưới đối xứng. Khi validation/test không augmentation ngẫu nhiên.
 
-Sau mỗi epoch đánh giá validation, lưu checkpoint nếu total validation loss tốt hơn. Tập test không tham gia chọn epoch hoặc hyperparameter. Sau chọn xong, nạp lại checkpoint tốt nhất rồi đánh giá test. Training là offline, bắt đầu từ seed; không tự tiếp tục optimizer cũ sau mỗi lần chạy.
+Trainer nền sau mỗi epoch đánh giá validation, lưu checkpoint nếu total validation loss tốt hơn. Test không tham gia chọn epoch hoặc hyperparameter. Sau chọn xong, nạp lại checkpoint tốt nhất rồi đánh giá test. Trainer nền bắt đầu từ seed. Vòng học người chơi ở mục 14 bắt đầu từ trọng số hiện tại với optimizer mới.
 
 | Chỉ số lần chạy hiện tại | Kết quả |
 |---|---:|
@@ -242,13 +242,13 @@ python frontend/tests/e2e.py
 python frontend/tests/improvements_e2e.py
 ~~~
 
-Hiện có **33 kiểm thử backend**: luật/kích thước, minimax không thua 3×3, tính hợp lệ và nguồn gốc dữ liệu, đối xứng/tách tập, nhãn outcome, chọn checkpoint và test giữ riêng, engine độc lập, dùng value, đe dọa kép, chặn đầu chung, pause/timeout, restart/quyền phòng, replay sandbox, benchmark đổi bên và metadata khớp checkpoint.
+Các kiểm thử backend bao gồm luật/kích thước, minimax không thua 3×3, dữ liệu/đối xứng/nguồn gốc, checkpoint, engine độc lập, value, pause/restart, replay, benchmark và toàn bộ vòng học người chơi: thu thập, phân tích lại policy, chống rò rỉ giữa các lần học, cổng chấp nhận/từ chối, nạp model, sao lưu và phục hồi khi lỗi ghi file.
 
 Hai bộ kiểm thử trình duyệt bao gồm chế độ chờ/Bắt đầu, online/kết nối lại, di động, biểu đồ, engine/điểm thành phần, tác vụ thí nghiệm, tải JSON, phân tích replay và giữ đồng hồ qua tải lại trang.
 
 ## 13. Giới hạn cần trình bày trung thực
 
-- Dữ liệu từ teacher/rollout tổng hợp; chưa có chuyên gia hoặc cập nhật policy theo reward.
+- Dữ liệu nền từ rollout và dữ liệu bổ sung từ lịch sử người chơi; policy vẫn dựa teacher, chưa có chuyên gia hoặc cập nhật policy theo reward.
 - Value hơn baseline ít, chưa được calibration; không hứa tìm kiếm dùng value luôn mạnh hơn.
 - Phân bố kích thước/luật/giai đoạn chưa cân bằng hoàn toàn, mỗi nhóm test có số mẫu hữu hạn.
 - Teacher top-1 có giới hạn khi nhiều nước ngang nhau và không thay thế benchmark.
@@ -257,3 +257,19 @@ Hai bộ kiểm thử trình duyệt bao gồm chế độ chờ/Bắt đầu, o
 - Persistence phục hồi một process; chưa phải hệ thống nhiều worker hoặc tài khoản đám mây.
 
 Hướng nghiên cứu tiếp theo có thể là dữ liệu expert, cân bằng giai đoạn, teacher tìm kiếm mạnh hơn, đánh giá value theo giai đoạn, nhiều seed/giải đấu lớn hơn hoặc RL tự chơi thực sự. Các hướng này cần thực nghiệm riêng, không trình bày như tính năng đã hoàn thành.
+
+## 14. Học từ các ván đấu với người thật
+
+Vòng mới nằm trong learning.py, learning_data.py, app/experience.py và bảng human_games/human_position_split trong SQLite. Ván AI, local và online được thu khi kết thúc bằng chuỗi thắng hoặc đầy bàn; bỏ qua spectate, đầu hàng, timeout, quỹ đạo lặp và dữ liệu không hợp lệ. Hệ thống quét lại lịch sử cũ khi khởi động.
+
+Tách cả ván theo hash cố định: khoảng 20% thuộc validation. Ledger phân công vị trí canonical cố định ngăn một vị trí từng train trở thành validation ở lần sau. Mọi vị trí trùng train/validation/test nền bị loại khỏi phần người chơi.
+
+Policy được tái phân tích theo luật, không học máy móc nước sai của người chơi; value là kết quả ván theo phía đang đi. Lấy tối đa 256 mẫu train người chơi, 128 mẫu validation người chơi và tối đa 1.024 mẫu train nền để ôn lại. Không ghi đè dataset nền, không dùng test để chọn ứng viên.
+
+Fine-tuning từ trọng số hiện tại bằng AdamW, learning rate 0,0002, mặc định 3 epoch. Chọn epoch theo validation nền cộng validation người chơi. Sau đó so sánh loss với incumbent, và đấu 16 ván đổi bên ở cả CNN/lai. Cổng yêu cầu tổng điểm ít nhất 55%, mỗi biến thể ít nhất 50%, loss nền không tăng quá 2% + 0,01, loss validation người không tăng quá 10% + 0,02.
+
+Nếu đạt, sao lưu model cũ, lưu checkpoint/metadata mới và nạp engine mới cho lượt AI tiếp theo. Các lượt suy nghĩ đang chạy giữ đối tượng engine cũ, không bị thay trọng số giữa tìm kiếm. Nếu không đạt, giữ model hiện tại; lưu ứng viên và báo cáo để xem lại. File lock ngăn trainer CLI ghi trùng. Dữ liệu mới đến trong lúc train được để cho đợt sau.
+
+Mặc định tự thử sau 5 ván mới, tối thiểu 8 vị trí train sau lọc; có thể tắt tự học, đổi ngưỡng/epoch hoặc chạy ngay trong AI Lab. Đây là học bổ sung theo lô từ tương tác người chơi, không phải cập nhật gradient ngay sau từng cú nhấp hay bảo đảm thắng nhiều hơn sau mỗi ván.
+
+Một lần chạy đã được kiểm tra trên 35 ván lưu sẵn: 256 mẫu train người chơi, 128 mẫu kiểm định và 1.024 mẫu nền; 3 epoch. Validation loss lần lượt 4,03101 → 4,02475 → 4,02232. Đấu model cũ đạt 6 thắng/3 hòa/7 thua, 46,88% điểm. Vì không đạt ngưỡng, model gốc được giữ nguyên. Chi tiết ở [HOC_TU_NGUOI_CHOI.md](HOC_TU_NGUOI_CHOI.md).

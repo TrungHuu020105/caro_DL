@@ -14,6 +14,7 @@ from .game import Game, GameConfig
 from .storage import Storage
 from .review import replay_prefix, review_game
 from ..benchmark import ExperimentRunner
+from ..learning import HumanLearning
 
 games: dict[str, Game] = {}
 locks: dict[str, asyncio.Lock] = {}
@@ -22,6 +23,26 @@ engine: AIEngine | None = None
 storage: Storage | None = None
 experiments: ExperimentRunner | None = None
 experiment_tasks: set[asyncio.Task] = set()
+learner: HumanLearning | None = None
+learning_tasks: set[asyncio.Task] = set()
+
+
+def activate_learned_model(updated):
+    global engine
+    engine = updated
+
+
+def schedule_learning(manual=False,epochs=None):
+    if experiments.snapshot()["status"] == "running":
+        if manual: raise ValueError("Đang chạy thí nghiệm. Hãy chờ giải đấu hoàn thành trước khi học.")
+        return False
+    if not learner.prepare(manual=manual,epochs=epochs): return False
+    loop = asyncio.get_running_loop()
+    task = asyncio.create_task(run_in_threadpool(learner.run,engine,
+        lambda updated:loop.call_soon_threadsafe(activate_learned_model,updated)))
+    learning_tasks.add(task)
+    task.add_done_callback(learning_tasks.discard)
+    return True
 
 
 async def broadcast(game):
@@ -33,6 +54,7 @@ async def broadcast(game):
 
 
 async def clock_loop():
+    next_learning_check = 0
     while True:
         await asyncio.sleep(.5)
         for game_id, game in list(games.items()):
@@ -45,18 +67,25 @@ async def clock_loop():
                 locks.pop(game_id, None)
                 peers.pop(game_id, None)
                 storage.forget_active(game_id)
+        if time() >= next_learning_check:
+            next_learning_check = time()+5
+            if learner is not None and learner.ready(): schedule_learning()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global engine, storage, experiments
-    engine = AIEngine()
+    global engine, storage, experiments, learner
+    model_dir = Path(os.environ.get("CARO_MODEL_DIR",Path(__file__).resolve().parents[1]/"models"))
+    engine = AIEngine(model_dir)
     storage = Storage(Path(os.environ.get("CARO_DATABASE_PATH", Path(__file__).resolve().parents[1] / "data" / "caro.sqlite3")))
     games.clear(); locks.clear(); peers.clear()
     for game in storage.load_active():
         games[game.id] = game
         locks[game.id] = asyncio.Lock()
     experiments = ExperimentRunner(Path(os.environ.get("CARO_BENCHMARK_PATH", Path(__file__).resolve().parents[1]/"models"/"benchmark.json")))
+    await run_in_threadpool(storage.backfill_experience)
+    learning_dir = Path(os.environ.get("CARO_LEARNING_DIR",storage.path.parent/"learning" if "CARO_DATABASE_PATH" in os.environ else model_dir/"learning"))
+    learner = HumanLearning(storage,model_dir,Path(os.environ.get("CARO_DATASET_PATH",Path(__file__).resolve().parents[1]/"data"/"training"/"caro_dataset.npz")),learning_dir)
     task = asyncio.create_task(clock_loop())
     yield
     task.cancel()
@@ -65,8 +94,11 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     experiments.cancel.set()
+    learner.cancel.set()
     if experiment_tasks:
         await asyncio.gather(*experiment_tasks, return_exceptions=True)
+    if learning_tasks:
+        await asyncio.gather(*learning_tasks, return_exceptions=True)
 
 
 app = FastAPI(title="Caro Lab API", version="1.0.0", lifespan=lifespan)
@@ -90,12 +122,13 @@ def get_game(game_id, token):
 async def finish(game, token):
     storage.save(game)
     await broadcast(game)
+    if learner is not None and learner.ready(): schedule_learning()
     return game.view(token)
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "model_loaded": engine.loaded}
+    return {"status": "ok", "model_loaded": engine.loaded, "checkpoint_sha256":engine.checkpoint_sha256}
 
 
 @app.get("/api/model")
@@ -340,6 +373,8 @@ def experiment_state():
 
 @app.post("/api/experiments", status_code=202)
 async def start_experiment(body: ExperimentRequest):
+    if learner.snapshot()["status"] == "running":
+        raise HTTPException(409, "Đang học từ lịch sử. Hãy chờ hoàn thành trước khi chạy giải đấu.")
     if "cnn" in body.variants and not engine.loaded:
         raise HTTPException(400, "Cần checkpoint CNN để chạy so sánh này.")
     try:
@@ -350,6 +385,42 @@ async def start_experiment(body: ExperimentRequest):
     experiment_tasks.add(task)
     task.add_done_callback(experiment_tasks.discard)
     return experiments.snapshot()
+
+
+@app.get("/api/learning")
+def learning_state():
+    state = learner.snapshot()
+    state["active_checkpoint_sha256"] = engine.checkpoint_sha256
+    return state
+
+
+class LearningSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool | None = None
+    min_new_games: int | None = Field(default=None,ge=3,le=50)
+    epochs: int | None = Field(default=None,ge=1,le=8)
+
+
+@app.post("/api/learning/settings")
+def learning_settings(body: LearningSettingsRequest):
+    try:
+        return learner.configure(body.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(409,str(exc)) from exc
+
+
+class LearnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    epochs: int | None = Field(default=None,ge=1,le=8)
+
+
+@app.post("/api/learning/run",status_code=202)
+async def start_human_learning(body: LearnRequest):
+    try:
+        schedule_learning(manual=True,epochs=body.epochs)
+    except ValueError as exc:
+        raise HTTPException(409,str(exc)) from exc
+    return learner.snapshot()
 
 
 @app.websocket("/ws/games/{game_id}")

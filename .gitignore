@@ -11,3 +11,5 @@ dist/
 backend/data/*.sqlite3*
 frontend/test-results/
 *.tsbuildinfo
+backend/models/.model-write.lock
+backend/models/learning/

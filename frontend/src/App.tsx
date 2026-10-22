@@ -226,9 +226,10 @@ export default function App() {
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
-        await request("/health");
+        const health = await request<{ checkpoint_sha256?: string }>("/health");
         setServerReady(true);
-        if (!model) setModel(await request<ModelInfo>("/model"));
+        if (!model || health.checkpoint_sha256 !== model.checkpoint_sha256)
+          setModel(await request<ModelInfo>("/model"));
       } catch {
         setServerReady(false);
       }
@@ -1071,6 +1072,23 @@ export default function App() {
                         : "Bàn cờ đã đầy và không có bên nào thắng."}
                   </p>
                 )}
+                {finished &&
+                  actual.mode !== "spectate" &&
+                  (game?.ended_reason === "line" ||
+                    game?.ended_reason === "full") && (
+                    <div className="learning-game-note">
+                      <span>
+                        Ván đã lưu. AI có thể học thêm từ lịch sử các ván hợp
+                        lệ.
+                      </span>
+                      <button
+                        className="text-button"
+                        onClick={() => setTab("lab")}
+                      >
+                        Xem AI học từ ván đấu <ArrowUpRight size={14} />
+                      </button>
+                    </div>
+                  )}
               </section>
               <aside className="insights-column">
                 <section className="ai-card">
@@ -1219,7 +1237,7 @@ export default function App() {
         ) : tab === "guide" ? (
           <Guide />
         ) : tab === "lab" ? (
-          <AILab model={model} />
+          <AILab model={model} onModelChanged={checkServer} />
         ) : (
           <Statistics history={history} onReplay={setReplay} />
         )}

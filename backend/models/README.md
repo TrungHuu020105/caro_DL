@@ -18,3 +18,13 @@ CNN thuần argmax policy, không có tactical override. Chiến thuật thuần
 Không suy ra tỷ lệ thắng từ top-1. Value chưa hiệu chỉnh thành xác suất thắng, có thể chỉ hơn baseline 0 rất ít. Engine lai không bảo đảm mạnh hơn heuristic ở mọi ngân sách. Benchmark là số đo thực tế, không phải Elo hoặc dữ liệu minh họa.
 
 Checkpoint v1 có 5 kênh không tương thích; API báo cần huấn luyện lại và chuyển sang heuristic. Không sửa giả chỉ số JSON.
+
+## Học bổ sung từ lịch sử người chơi
+
+Vòng học trong learning.py bắt đầu từ trọng số hiện tại, learning rate 0,0002, mặc định 3 epoch. Lịch sử được kiểm tra, phân tích lại policy và lấy kết quả làm value; trộn tối đa 256 mẫu người chơi với tối đa 1.024 mẫu train nền. Validation và test được tách theo ván/đối xứng; nhãn policy không sao chép mọi nước người chơi.
+
+Ứng viên phải qua kiểm định và giải đấu 16 ván đổi bên với model hiện tại, ở cả CNN thuần và engine lai. Ngưỡng tổng 55% điểm, mỗi biến thể ít nhất 50%; đồng thời giữ loss kiểm định trong sai số quy định. Đây là cổng thực nghiệm hữu hạn, không phải bảo đảm sức mạnh trong mọi ván.
+
+Nếu được chấp nhận, cặp checkpoint/metadata mới được lưu, model cũ sao lưu ở learning/versions/<sha256>/ và backend nạp engine mới. Lượt suy nghĩ đang chạy tiếp tục dùng engine cũ. Báo cáo và trọng số ứng viên ở learning/runs/<run-id>/; ứng viên bị loại không ghi đè model đang dùng. Test nền chỉ đánh giá sau khi cổng chấp nhận, không dùng để lựa chọn.
+
+Chi tiết và kết quả một lần chạy thật: [HOC_TU_NGUOI_CHOI.md](../HOC_TU_NGUOI_CHOI.md).

@@ -28,7 +28,7 @@ def main():
         page.get_by_role("button",name=re.compile("AI Lab")).first.click()
         expect(page.get_by_role("heading",name="Đánh giá trên tập test giữ riêng")).to_be_visible()
         accuracy = context.request.get("/api/model").json()["training"]["test_metrics"]["top1_accuracy"]
-        expect(page.locator(".evaluation-values")).to_contain_text(f"{accuracy*100:.1f}%")
+        expect(page.locator(".evaluation-panel .evaluation-values")).to_contain_text(f"{accuracy*100:.1f}%")
         expect(page.locator(".benchmark-table tbody tr")).to_have_count(3)
         with page.expect_download() as download:
             page.get_by_role("button",name="Tải kết quả JSON").click()

@@ -1,4 +1,74 @@
 /* Keep dense controls legible while preserving room for the board. */
+.learning-game-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 14px;
+  color: var(--subtle);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.human-learning-panel {
+  padding: 24px;
+  margin-top: 24px;
+  min-width: 0;
+}
+.human-learning-panel > p,
+.human-learning-report p {
+  line-height: 1.7;
+  color: var(--subtle);
+  margin: 12px 0 18px;
+}
+.human-learning-settings {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 1fr auto;
+  gap: 16px;
+  align-items: end;
+  margin: 20px 0;
+}
+.human-learning-settings .experiment-toggle {
+  align-self: center;
+}
+.learning-status {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+.human-learning-report {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 20px;
+}
+.human-learning-report table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.human-learning-report td,
+.human-learning-report th {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.human-learning-report li {
+  color: var(--subtle);
+  line-height: 1.7;
+}
+@media (max-width: 900px) {
+  .human-learning-settings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .human-learning-panel {
+    padding: 16px;
+  }
+  .human-learning-settings .experiment-toggle {
+    grid-column: 1 / -1;
+  }
+}
 .experiment-panel,
 .evaluation-panel {
   padding: 24px;

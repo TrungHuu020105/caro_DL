@@ -15,6 +15,7 @@ Game caro tiếng Việt dùng **FastAPI + React + Vite + PyTorch**, chạy trê
 - Lịch sử/replay có **Phân tích cơ hội sau ván** và **Thử phương án khác** để nhận phản hồi AI trong nhánh riêng.
 - Phân tích nước AI hiển thị điểm CNN, chiến thuật, kết hợp, tìm kiếm và số nút. Heatmap ghi rõ thuộc thế cờ trước nước AI vừa đánh.
 - **AI Lab**: loss, test giữ riêng, chỉ số theo kích thước/luật, baseline value; giải đấu engine chạy nền, tiến độ và tải JSON.
+- **Học từ người chơi**: thu các ván hợp lệ, mặc định tự thử học sau 5 ván mới; trộn dữ liệu cũ, đánh giá ứng viên và chỉ áp dụng khi qua kiểm tra. AI Lab có nút học ngay, bật/tắt tự học và báo cáo.
 
 ## Chạy với Python 3.10
 
@@ -61,7 +62,22 @@ Dữ liệu từ rollout chiến thuật ngẫu nhiên hóa: X/O thay phiên, ch
 - Chọn checkpoint bằng validation; test chỉ đánh giá sau chọn checkpoint.
 - Metadata/checksum, kết quả theo luật/kích thước và baseline value=0 ở backend/models/training.json.
 
-Đây là học có giám sát từ rollout, chưa phải reinforcement learning/AlphaZero. Top-1 đo khớp teacher, không phải tỷ lệ thắng; value chưa hiệu chỉnh thành xác suất thắng. Xem [thuyết minh](backend/THUYET_MINH_TRAIN_AI.md), [dữ liệu](backend/data/README.md), [checkpoint](backend/models/README.md).
+Huấn luyện nền học có giám sát từ rollout; học bổ sung dùng cả lịch sử đấu người. Policy được phân tích lại, value lấy kết quả ván. Chưa phải reinforcement learning/AlphaZero. Top-1 đo khớp teacher, không phải tỷ lệ thắng; value chưa hiệu chỉnh thành xác suất thắng. Xem [thuyết minh](backend/THUYET_MINH_TRAIN_AI.md), [học từ người chơi](backend/HOC_TU_NGUOI_CHOI.md), [dữ liệu](backend/data/README.md), [checkpoint](backend/models/README.md).
+
+## Để AI học từ những ván bạn chơi
+
+1. Hoàn thành các ván **Đấu với AI**, **Hai người** hoặc **Chơi online** bằng thắng trên bàn hoặc hòa.
+2. Mở **AI Lab → Học từ các ván với người chơi** để xem số ván mới, bật/tắt tự học hoặc bấm **Học từ lịch sử ngay**.
+3. Mặc định tự thử học sau 5 ván mới, 3 epoch. Cần ít nhất 8 vị trí train sau lọc trùng. Các ván đầu hàng, hết giờ, AI đấu AI và quỹ đạo trùng được bỏ qua.
+4. Ứng viên được kiểm định và đấu model cũ. Chỉ khi đạt yêu cầu mới nạp cho các lượt AI tiếp theo; nếu chưa đạt, giữ model cũ và báo lý do.
+
+Học chạy nền, vẫn chơi cờ được. Khi dùng giao diện không cần khởi động lại backend sau khi model được chấp nhận. Nếu muốn chạy riêng bằng terminal, dừng backend trước, rồi chạy và mở lại backend sau đó:
+
+~~~powershell
+.\.venv\Scripts\python.exe -m backend.learn --epochs 3
+~~~
+
+Đây là fine-tuning từ trọng số hiện tại. Lệnh backend.train bên dưới vẫn dùng để huấn luyện nền mới từ đầu.
 
 ## Huấn luyện và benchmark
 
@@ -101,6 +117,8 @@ Kiểm thử trình duyệt khi hai server đang chạy, tại thư mục gốc:
 .\.venv\Scripts\python.exe frontend/tests/improvements_e2e.py
 ~~~
 
+Kiểm thử riêng vòng học người chơi: chạy frontend/tests/human_learning_e2e.py với backend dùng database, model và thư mục học thử riêng. Script tạo ván thử và có thể thay model thử; không dùng trực tiếp với dữ liệu/model chính.
+
 Kiểm tra gồm nguồn gốc rollout, tách tập/đối xứng, hash Python 3.10, outcome labels, chọn checkpoint, engine độc lập, value trong tìm kiếm, đe dọa kép, pause/timeout, restart, replay sandbox và giải đấu đổi bên. Ảnh lưu ở frontend/test-results/.
 
 Để kiểm thử server mà không chạm lịch sử thật, đặt CARO_DATABASE_PATH và CARO_BENCHMARK_PATH tới file riêng trước khi chạy backend.
@@ -112,4 +130,6 @@ Kiểm tra gồm nguồn gốc rollout, tách tập/đối xứng, hash Python 3
 - Chạy **một worker FastAPI**: lock/cache trong một process. SQLite giúp phục hồi, chưa đồng bộ cache nhiều worker.
 - Chưa có tài khoản/Elo. Lịch sử truy cập qua ID ngẫu nhiên mà trình duyệt giữ, không liệt kê công khai mọi ván.
 - Build tạo frontend/dist; triển khai reverse proxy /api và /ws, WebSocket và HTTPS. Khác origin cần VITE_API_URL trước build và CORS phù hợp.
-- Chỉ một thí nghiệm nền cùng lúc, có giới hạn số cặp/kích thước/ngân sách. Huấn luyện chạy CLI.
+- Thí nghiệm và học bổ sung không chạy cùng lúc. Writer lock ngăn trainer CLI và vòng học cùng ghi checkpoint. Huấn luyện nền chạy CLI; học bổ sung chạy tự động hoặc từ AI Lab.
+- Học bổ sung lưu trạng thái, ứng viên, dataset và báo cáo ở backend/models/learning/; phiên bản model cũ ở learning/versions/. Các artifact phát sinh và SQLite không đưa vào Git.
+- Các biến dành cho chạy thử cô lập: CARO_DATABASE_PATH, CARO_MODEL_DIR, CARO_LEARNING_DIR, CARO_DATASET_PATH và CARO_BENCHMARK_PATH.

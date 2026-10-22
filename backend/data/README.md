@@ -52,3 +52,11 @@ Tại thư mục gốc, Python 3.10:
 Hash đọc theo chunk để tương thích Python 3.10. Seed tái tạo cùng tensor với cùng phiên bản generator/thư viện. Timestamp/ZIP metadata có thể đổi hash toàn file NPZ; đối chiếu thêm fingerprint_sha256 của tensor.
 
 Đây là rollout chiến thuật ngẫu nhiên hóa, không phải dữ liệu chuyên gia hoặc reinforcement learning. Policy bắt chước teacher; value phản ánh kết quả theo chính sách rollout.
+
+## Dữ liệu từ người chơi
+
+SQLite có human_games giữ quỹ đạo ẩn danh của ván hợp lệ và human_position_split giữ phân công train/validation cố định của từng thế cờ canonical. Không thu tên, token hoặc mã phòng vào dataset học. Ván đầu hàng/hết giờ/AI đấu AI không cung cấp nhãn kết quả cho vòng này.
+
+learning_data.py dựng lại tiền tố, tạo policy bằng teacher có kiểm tra phòng thủ, và value bằng kết quả ván. Loại các vị trí trùng qua xoay/lật với cả train/validation/test nền; loại quỹ đạo giống dataset nền. Ledger vị trí ngăn một thế đã dùng train trở thành validation khi xuất hiện trong ván mới.
+
+Mỗi lần học xuất experience.npz ở backend/models/learning/runs/<run-id>/, gồm human_train_*, human_validation_*, chỉ số replay train nền và metadata không có thông tin định danh. Các trường tensor giữ quy ước canvas 25×25. Base dataset không bị ghi đè bởi vòng học người chơi. Artifact này khác NPZ nền: nó chỉ chứa phần người chơi và chỉ số replay, không nạp qua load_dataset của trainer nền.

@@ -14,6 +14,7 @@ from torch.nn import functional as F
 from .app.network import CaroNet, MODEL_VERSION, RULES
 from .dataset import (DEFAULT_DATA_DIR, export_dataset, file_sha256, fingerprint,
                       generate_dataset, generate_split, load_dataset, write_json)
+from .model_store import ModelBusyError, model_writer
 
 VALUE_WEIGHT = .5
 
@@ -79,6 +80,16 @@ def main():
         parser.error("Use at least 100 samples, 1 epoch, a positive batch size and non-negative seed.")
     if args.export_only and args.dataset:
         parser.error("--export-only generates new data; omit --dataset.")
+    if args.export_only:
+        return run_training(args, parser)
+    try:
+        with model_writer(args.model_dir):
+            return run_training(args, parser)
+    except ModelBusyError as exc:
+        parser.error(str(exc))
+
+
+def run_training(args, parser):
     torch.manual_seed(args.seed)
     torch.set_num_threads(min(4,torch.get_num_threads()))
     rng, started = np.random.default_rng(args.seed), perf_counter()
