@@ -5,6 +5,7 @@ import time
 import unittest
 import numpy as np
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 from backend.app.ai import AIEngine
 from backend.app.game import Game, GameConfig
 from backend.app.rules import winning_line
@@ -13,6 +14,13 @@ from backend.app.main import app
 
 
 class RulesTests(unittest.TestCase):
+    def test_waiting_room_does_not_run_the_clock(self):
+        game=Game(GameConfig(mode="online",time_limit=15))
+        game.turn_started_at=time.time()-60
+        self.assertFalse(game.timeout())
+        self.assertEqual(game.status,"waiting")
+        self.assertIsNone(game.started_at)
+
     def test_all_board_sizes_and_directions(self):
         for size, (dr, dc) in itertools.product(range(3, 26), [(0,1),(1,0),(1,1),(1,-1)]):
             k = min(size, 5)
@@ -150,10 +158,50 @@ class APITests(unittest.TestCase):
         self.assertEqual(stored[0]["id"],game["id"])
         self.assertNotIn("token",str(stored))
 
-    def test_removed_mode_and_room_endpoints(self):
-        self.assertEqual(self.client.post("/api/games",json={"mode":"online"}).status_code,422)
-        self.assertEqual(self.client.post("/api/rooms/join",json={"code":"ABC123"}).status_code,404)
-        self.assertFalse(any(route.path.startswith("/ws/") for route in app.routes))
+    def test_online_room_websocket_sync_and_turn_ownership(self):
+        game,headers=self.create(size=6,win_length=4,mode="online",time_limit=15)
+        url=f'/api/games/{game["id"]}'
+        self.assertEqual(game["status"],"waiting")
+        self.assertIsNone(game["started_at"])
+        self.assertEqual(len(game["room_code"]),6)
+        self.assertEqual(self.client.post(url+"/move",headers=headers,json={"row":0,"col":0,"revision":0}).status_code,400)
+        with self.client.websocket_connect(f'/ws/games/{game["id"]}') as host_ws:
+            host_ws.send_json({"token":headers["X-Player-Token"]})
+            self.assertEqual(host_ws.receive_json()["game"]["status"],"waiting")
+            joined=self.client.post("/api/rooms/join",json={"code":game["room_code"].lower(),"name":"Khách"})
+            self.assertEqual(joined.status_code,200,joined.text)
+            guest=joined.json()
+            guest_headers={"X-Player-Token":guest["token"]}
+            self.assertEqual(guest["game"]["config"]["win_length"],4)
+            self.assertEqual(guest["game"]["your_player"],-1)
+            self.assertIsNotNone(host_ws.receive_json()["game"]["started_at"])
+            with self.client.websocket_connect(f'/ws/games/{game["id"]}') as guest_ws:
+                guest_ws.send_json({"token":guest["token"]})
+                self.assertEqual(guest_ws.receive_json()["game"]["status"],"playing")
+                self.assertEqual(self.client.post(url+"/move",headers=guest_headers,json={"row":1,"col":0,"revision":1}).status_code,403)
+                self.assertEqual(self.client.post(url+"/move",headers=headers,json={"row":0,"col":0,"revision":1}).status_code,200)
+                self.assertEqual(host_ws.receive_json()["game"]["board"][0][0],1)
+                self.assertEqual(guest_ws.receive_json()["game"]["board"][0][0],1)
+                self.assertEqual(self.client.post(url+"/move",headers=guest_headers,json={"row":1,"col":0,"revision":2}).status_code,200)
+                self.assertEqual(host_ws.receive_json()["game"]["board"][1][0],-1)
+                self.assertEqual(guest_ws.receive_json()["game"]["board"][1][0],-1)
+                self.assertEqual(self.client.post(url+"/move",headers=headers,json={"row":0,"col":1,"revision":2}).status_code,409)
+                self.assertEqual(self.client.post(url+"/undo",headers=headers).status_code,400)
+                self.assertEqual(self.client.post(url+"/hint",headers=guest_headers).status_code,400)
+                self.assertEqual(self.client.post("/api/rooms/join",json={"code":game["room_code"]}).status_code,409)
+                self.assertEqual(self.client.post(url+"/resign",headers=guest_headers).json()["winner"],1)
+                self.assertEqual(host_ws.receive_json()["game"]["status"],"won")
+                self.assertEqual(guest_ws.receive_json()["game"]["status"],"won")
+
+    def test_invalid_room_and_websocket_authentication(self):
+        self.assertEqual(self.client.post("/api/rooms/join",json={"code":"ABC234"}).status_code,404)
+        game,headers=self.create(mode="online")
+        for auth in (["invalid"], {"token":"wrong"}):
+            with self.client.websocket_connect(f'/ws/games/{game["id"]}') as ws:
+                ws.send_json(auth)
+                with self.assertRaises(WebSocketDisconnect) as closed:
+                    ws.receive_json()
+                self.assertEqual(closed.exception.code,1008)
 
     def test_custom_winning_length_on_larger_board(self):
         game,headers=self.create(size=6,win_length=4,mode="local")

@@ -43,7 +43,7 @@ export function Guide() {
           {
             icon: Users,
             title: "X trước, O sau",
-            text: "Hai bên lần lượt đặt một quân vào ô trống. Bạn có thể chơi cùng một người tại máy, đấu AI hoặc xem hai AI tự chơi. X luôn đi trước, O đi sau.",
+            text: "Hai bên lần lượt đặt một quân vào ô trống. Bạn có thể chơi cùng một người tại máy, đấu AI, xem hai AI tự chơi hoặc mời bạn online bằng mã phòng. X luôn đi trước, O đi sau.",
           },
           {
             icon: Trophy,
@@ -58,7 +58,7 @@ export function Guide() {
           {
             icon: Lightbulb,
             title: "Một chút trợ giúp",
-            text: "Gợi ý đánh dấu nước đi AI đề xuất. Đi lại hoàn tác một lượt ở chế độ hai người hoặc lượt của bạn cùng phản hồi của AI. Khi xem AI đấu AI, bạn có thể tạm dừng và tiếp tục.",
+            text: "Gợi ý đánh dấu nước đi AI đề xuất. Đi lại hoàn tác một lượt ở chế độ hai người hoặc lượt của bạn cùng phản hồi của AI. Hai tính năng này tắt khi chơi online. Khi xem AI đấu AI, bạn có thể tạm dừng và tiếp tục.",
           },
           {
             icon: BrainCircuit,

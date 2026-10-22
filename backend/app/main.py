@@ -1,9 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+import secrets
 from time import time
 from typing import Annotated
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
@@ -13,8 +14,17 @@ from .storage import Storage
 
 games: dict[str, Game] = {}
 locks: dict[str, asyncio.Lock] = {}
+peers: dict[str, set[WebSocket]] = {}
 engine: AIEngine | None = None
 storage: Storage | None = None
+
+
+async def broadcast(game):
+    for ws in list(peers.get(game.id, set())):
+        try:
+            await ws.send_json({"type": "state", "game": game.view(ws.state.token)})
+        except (RuntimeError, WebSocketDisconnect, OSError):
+            peers.get(game.id, set()).discard(ws)
 
 
 async def clock_loop():
@@ -24,9 +34,11 @@ async def clock_loop():
             async with locks[game_id]:
                 if game.timeout():
                     storage.save(game)
-            if time() - game.created_at > 12 * 3600:
+                    await broadcast(game)
+            if time() - game.created_at > 12 * 3600 and not peers.get(game_id):
                 games.pop(game_id, None)
                 locks.pop(game_id, None)
+                peers.pop(game_id, None)
 
 
 @asynccontextmanager
@@ -63,6 +75,7 @@ def get_game(game_id, token):
 
 async def finish(game, token):
     storage.save(game)
+    await broadcast(game)
     return game.view(token)
 
 
@@ -81,17 +94,45 @@ async def create_game(config: GameConfig):
     if len(games) >= 2000:
         raise HTTPException(503, "Máy chủ đang đầy, vui lòng thử lại sau.")
     game = Game(config)
+    if config.mode == "online":
+        used = {g.room_code for g in games.values()}
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        while not game.room_code or game.room_code in used:
+            game.room_code = "".join(secrets.choice(alphabet) for _ in range(6))
     games[game.id] = game
     locks[game.id] = asyncio.Lock()
     return {"game": game.view(game.host_token), "token": game.host_token}
+
+
+class JoinRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[A-Za-z0-9]{6}$")
+    name: str = Field(default="Người chơi 2", min_length=1, max_length=24)
+
+
+@app.post("/api/rooms/join")
+async def join_room(body: JoinRequest):
+    game = next((g for g in games.values() if g.room_code == body.code.upper()), None)
+    if not game:
+        raise HTTPException(404, "Mã phòng không tồn tại hoặc đã hết hạn.")
+    async with locks[game.id]:
+        if game.guest_token or game.status != "waiting":
+            raise HTTPException(409, "Phòng đã đủ người hoặc ván cờ đã kết thúc.")
+        game.guest_token = secrets.token_urlsafe(32)
+        game.guest_name = body.name.strip() or "Người chơi 2"
+        game.status = "playing"
+        game.started_at = game.turn_started_at = time()
+        game.revision += 1
+        await broadcast(game)
+        return {"game": game.view(game.guest_token), "token": game.guest_token}
 
 
 @app.get("/api/games/{game_id}")
 async def game_state(game_id: str, x_player_token: Token):
     game = get_game(game_id, x_player_token)
     async with locks[game_id]:
-        game.timeout()
-        return await finish(game, x_player_token)
+        if game.timeout():
+            return await finish(game, x_player_token)
+        return game.view(x_player_token)
 
 
 class MoveRequest(BaseModel):
@@ -141,7 +182,7 @@ async def ai_move(game_id: str, x_player_token: Token):
 async def hint(game_id: str, x_player_token: Token):
     game = get_game(game_id, x_player_token)
     async with locks[game_id]:
-        if game.config.mode == "spectate" or game.status != "playing":
+        if game.config.mode in ("online", "spectate") or game.status != "playing":
             raise HTTPException(400, "Gợi ý chỉ dùng khi đang đấu AI hoặc chơi hai người tại máy.")
         analysis = await run_in_threadpool(engine.choose, game.board, game.current_player,
                                             game.config.win_length, game.config.rule, "hard")
@@ -179,3 +220,29 @@ class HistoryRequest(BaseModel):
 @app.post("/api/history")
 def history(body: HistoryRequest):
     return storage.history(body.ids)
+
+
+@app.websocket("/ws/games/{game_id}")
+async def room_socket(ws: WebSocket, game_id: str):
+    await ws.accept()
+    try:
+        auth = await asyncio.wait_for(ws.receive_json(), timeout=10)
+        if not isinstance(auth, dict) or not isinstance(auth.get("token"), str):
+            raise ValueError("Invalid authentication frame")
+        game = get_game(game_id, auth["token"])
+        if game.config.mode != "online":
+            raise ValueError("Not an online room")
+    except (HTTPException, asyncio.TimeoutError, ValueError, WebSocketDisconnect):
+        await ws.close(code=1008)
+        return
+    ws.state.token = auth["token"]
+    peers.setdefault(game_id, set()).add(ws)
+    try:
+        await ws.send_json({"type": "state", "game": game.view(ws.state.token)})
+        while True:
+            if await ws.receive_text() == "ping":
+                await ws.send_json({"type": "pong"})
+    except (WebSocketDisconnect, RuntimeError, OSError):
+        pass
+    finally:
+        peers.get(game_id, set()).discard(ws)

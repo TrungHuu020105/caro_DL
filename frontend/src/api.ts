@@ -2,6 +2,16 @@ import type { Session } from "./types";
 
 export const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
+export class APIError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "APIError";
+  }
+}
+
 export async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -25,7 +35,7 @@ export async function request<T>(
         typeof body.detail === "string"
           ? body.detail
           : "Dữ liệu chưa hợp lệ. Hãy kiểm tra thiết lập.";
-      throw new Error(message);
+      throw new APIError(message, response.status);
     }
     return (await response.json()) as T;
   } catch (error) {
@@ -63,6 +73,38 @@ export function readSaved<T>(key: string, fallback: T): T {
     return JSON.parse(localStorage.getItem(key) || "null") ?? fallback;
   } catch {
     return fallback;
+  }
+}
+
+export function socketUrl(id: string) {
+  const base = API_BASE ? new URL(API_BASE) : new URL(window.location.origin);
+  base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  base.pathname = `${base.pathname.replace(/\/$/, "")}/ws/games/${id}`;
+  return base.toString();
+}
+
+export function readRoomSession(): Session | null {
+  try {
+    const value = JSON.parse(
+      sessionStorage.getItem("caro.room-session") || "null",
+    );
+    return value &&
+      typeof value.id === "string" &&
+      typeof value.token === "string"
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveRoomSession(value: Session | null) {
+  try {
+    if (value)
+      sessionStorage.setItem("caro.room-session", JSON.stringify(value));
+    else sessionStorage.removeItem("caro.room-session");
+  } catch {
+    /* Room remains playable when browser storage is unavailable. */
   }
 }
 export function save(key: string, value: unknown) {

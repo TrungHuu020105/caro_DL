@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import {
   Bot,
   Users,
+  Globe2,
   Play,
   ArrowUpRight,
   SlidersHorizontal,
@@ -28,6 +29,12 @@ export const MODES: {
     title: "Hai người",
     subtitle: "Chung máy, chung niềm vui",
     icon: Users,
+  },
+  {
+    id: "online",
+    title: "Chơi online",
+    subtitle: "Mời bạn bằng mã phòng",
+    icon: Globe2,
   },
   {
     id: "spectate",
@@ -199,6 +206,9 @@ export default function Settings({
   onStart,
   onAdvanced,
   started,
+  onJoin,
+  onResume,
+  canResume,
 }: {
   config: GameConfig;
   setConfig: (c: GameConfig) => void;
@@ -206,6 +216,9 @@ export default function Settings({
   onStart: () => void;
   onAdvanced: () => void;
   started: boolean;
+  onJoin: () => void;
+  onResume: () => void;
+  canResume: boolean;
 }) {
   return (
     <aside className="settings-column">
@@ -325,9 +338,33 @@ export default function Settings({
           disabled={busy}
           onClick={onStart}
         >
-          {started ? "Bắt đầu ván mới" : "Bắt đầu"}
+          {config.mode === "online"
+            ? "Bắt đầu · Tạo phòng"
+            : started
+              ? "Bắt đầu ván mới"
+              : "Bắt đầu"}
           <ArrowUpRight size={17} />
         </button>
+        {config.mode === "online" && (
+          <>
+            <button
+              className="button secondary room-action"
+              disabled={busy}
+              onClick={onJoin}
+            >
+              <Globe2 size={15} /> Tham gia bằng mã phòng
+            </button>
+            {canResume && (
+              <button
+                className="button secondary room-action"
+                disabled={busy}
+                onClick={onResume}
+              >
+                Kết nối lại phòng <ArrowUpRight size={14} />
+              </button>
+            )}
+          </>
+        )}
         <p className="settings-footnote">
           Chọn thiết lập rồi nhấn Bắt đầu để chơi.
         </p>

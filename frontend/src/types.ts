@@ -1,4 +1,4 @@
-export type Mode = "ai" | "local" | "spectate";
+export type Mode = "ai" | "local" | "online" | "spectate";
 export type Player = 1 | -1;
 export interface GameConfig {
   size: number;
@@ -33,12 +33,16 @@ export interface Game {
   board: number[][];
   moves: Move[];
   current_player: Player;
-  status: "playing" | "won" | "draw";
+  status: "waiting" | "playing" | "won" | "draw";
   winner: Player | null;
   winning_line: number[][];
   revision: number;
   analysis: Analysis | null;
   your_player: Player;
+  room_code: string | null;
+  guest_joined: boolean;
+  guest_name: string;
+  started_at?: number | null;
   created_at: number;
   turn_started_at: number;
   ended_reason: "line" | "timeout" | "resign" | "full" | null;
